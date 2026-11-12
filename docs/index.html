@@ -81,6 +81,7 @@
         <label><input type="checkbox" id="f-zeu" checked> ZEU <small>(ZEU, ZEUa, ZEUP, ZEUPa)</small></label>
         <label><input type="checkbox" id="f-zc" checked> ZC <small>(ZC, ZCa, ZC-ZEIS)</small></label>
         <label><input type="checkbox" id="f-env"> Ocultar manchas em área envoltória de tombamento</label>
+        <label><input type="checkbox" id="f-vila"> Somente manchas que incluem vila</label>
       </div>
 
       <h2>Camadas</h2>
@@ -113,7 +114,7 @@
       fora de condomínio (os “CD”), <b>não tombados</b> e com
       <b>área construída ÷ área do terreno ≤ <span data-p="ca"></span></b> — acima disso é tratado como prédio.</li>
     <li><b>Manchas.</b> Lotes elegíveis vizinhos (divisa comum de pelo menos <span data-p="divisa"></span> m) são
-      somados. A mancha aparece quando a soma chega a <b><span data-p="amin"></span> m²</b>.</li>
+      somados. A mancha aparece quando a soma chega a <b><span data-p="amin"></span> m²</b>. <b>Vilas:</b> a passagem de vila (lote “V” do GeoSampa) entra como elo — une as casas dos dois lados e soma área, sem contar como lote a negociar.</li>
     <li><b>Nota de forma (0–100).</b> Média ponderada de quatro medidas do terreno unificado:
       <ul>
         <li><b>Retangularidade</b> (<span data-p="p-ret"></span>%) — quanto do menor retângulo envolvente o terreno preenche.</li>

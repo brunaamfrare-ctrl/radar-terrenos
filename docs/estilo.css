@@ -209,3 +209,5 @@ dialog .fechar { position: absolute; top: 10px; right: 12px; background: none; b
 .barra-lista.ordem { justify-content: space-between; padding-top: 8px; }
 .barra-lista select { font: inherit; font-size: 12.5px; padding: 3px 4px; border: 1px solid var(--linha); border-radius: 6px; background: #fff; color: var(--tinta); max-width: 190px; }
 .barra-lista:not(.ordem) { border-bottom: 0; padding-bottom: 0; }
+.tag.vila { background: #e7eaff; color: #2a3aa8; border: 1px solid #c3caf5; }
+.alerta.info { background: #eef1ff; border-color: #c3caf5; color: #24327f; }

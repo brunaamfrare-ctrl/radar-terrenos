@@ -14,7 +14,7 @@ const ROTULOS = {
   },
 };
 const PADRAO = { modo: 'faixa', area: 2500, forma: 0, nmax: 61, est: 2100, pnr: 50, zeu: true, zc: true,
-  env: false, ordem: 'area', faixas: { 0: true, 1: true, 2: true, 3: true }, busca: '', soTela: true };
+  env: false, vila: false, ordem: 'area', faixas: { 0: true, 1: true, 2: true, 3: true }, busca: '', soTela: true };
 const ZOOM_LOTES = 15;
 const NMAX_SEM_LIMITE = 61, EST_SEM_LIMITE = 2100;
 
@@ -88,6 +88,7 @@ function exprFiltro() {
   if (est.est < EST_SEM_LIMITE) f.push(['<=', ['get', 'est_m'], est.est]);
   if (est.pnr < 100) f.push(['<=', ['get', 'pnr'], est.pnr]);
   if (est.env) f.push(['==', ['get', 'env'], '']);
+  if (est.vila) f.push(['!=', ['get', 'vila'], '']);
   if (!(est.zeu && est.zc)) {
     const fams = [];
     if (est.zeu) fams.push('ZEU', 'ZC+ZEU');
@@ -110,6 +111,7 @@ function passa(m) {
   if (est.est < EST_SEM_LIMITE && p.est_m > est.est) return false;
   if (est.pnr < 100 && p.pnr > est.pnr) return false;
   if (est.env && p.env) return false;
+  if (est.vila && !p.vila) return false;
   if (!est.zeu && !p.fam.includes('ZC')) return false;
   if (!est.zc && !p.fam.includes('ZEU')) return false;
   return passaBusca(m);
@@ -162,6 +164,8 @@ map.on('load', async () => {
       'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.8, 0.58] } });
   map.addLayer({ id: 'lotes-line', type: 'line', source: 'lotes', minzoom: ZOOM_LOTES,
     paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 0.5, 18, 1.4], 'line-opacity': 0.9 } });
+  map.addLayer({ id: 'vias-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES, filter: ['==', ['get', 'v'], 1],
+    paint: { 'fill-color': '#3b4fd6', 'fill-opacity': 0.5 } });
   map.addLayer({ id: 'lotes-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES,
     paint: { 'fill-color': '#000', 'fill-opacity': 0 } });
   map.addLayer({ id: 'manchas-line', type: 'line', source: 'manchas', minzoom: 12.5,
@@ -251,7 +255,7 @@ function atualizarLista() {
     return `<li data-id="${esc(p.id)}" class="${selecionada === p.id ? 'sel' : ''}">
       <span class="faixa" style="background:${CORES[p[est.modo]]}"></span>
       <span class="corpo"><span class="tit">${esc(titulo(p))}</span>
-        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.env ? ' · ⚠ envoltória' : ''}</span></span>
+        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.vila ? ' · vila' : ''}${p.env ? ' · ⚠ envoltória' : ''}</span></span>
       <span class="num"><b>${fmt(p.area)} m²</b><span>${est.modo === 'faixa' ? `equiv. ${fmt(p.area_eq)}` : `IPTU ${fmt(p.area_iptu)}`}</span></span>
     </li>`; }).join('') + (lista.length > top.length ? `<li class="vazio">+ ${fmt(lista.length - top.length)} manchas — aproxime o mapa ou refine os filtros.</li>` : '')
     : '<li class="vazio">Nenhuma mancha com esses filtros nesta área. Afaste o mapa ou relaxe os filtros.</li>';
@@ -301,10 +305,11 @@ function interacoes() {
     const f = e.features[0], p = f.properties;
     if (hoverId !== p.id) { soltar(); hoverId = p.id; map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: true }); }
     map.getCanvas().style.cursor = 'pointer';
-    let html = `<b>${fmt(p.area)} m²</b> · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}<br>${esc(p.zonas)}`;
+    let html = `<b>${fmt(p.area)} m²</b> · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}<br>${esc(p.zonas)}${p.vila ? ' · inclui vila' : ''}`;
     if (map.getZoom() >= ZOOM_LOTES) {
       const l = map.queryRenderedFeatures(e.point, { layers: ['lotes-fill'] })[0];
-      if (l) html = `<b>${esc(l.properties.end || 'Lote ' + l.properties.sql)}</b><br>terreno ${fmt(l.properties.at || l.properties.ag)} m² · construído ${fmt(l.properties.ac)} m²<br><span style="color:#5b6675">mancha: ${fmt(p.area)} m² · ${p.n} lotes · forma ${p.forma}</span>`;
+      if (l && l.properties.v) html = `<b>Passagem de vila</b> · ${fmt(l.properties.ag)} m²<br><span style="color:#5b6675">mancha: ${fmt(p.area)} m² · ${p.n} lotes · forma ${p.forma}</span>`;
+      else if (l) html = `<b>${esc(l.properties.end || 'Lote ' + l.properties.sql)}</b><br>terreno ${fmt(l.properties.at || l.properties.ag)} m² · construído ${fmt(l.properties.ac)} m²<br><span style="color:#5b6675">mancha: ${fmt(p.area)} m² · ${p.n} lotes · forma ${p.forma}</span>`;
     }
     dica.setLngLat(e.lngLat).setHTML(html).addTo(map);
   });
@@ -368,12 +373,14 @@ function desenharDetalhe(m, lotes) {
       <button class="link" id="copiar" type="button">Copiar link</button></div>
     <h3>${esc(titulo(p))}</h3>
     <p class="onde">${esc(p.distrito)} · setor-quadra ${esc(p.id.slice(0, 7))}${p.ruas.split(' · ').length > 2 ? ' · também ' + esc(p.ruas.split(' · ').slice(2).join(', ')) : ''}</p>
-    <div class="tags"><span class="tag t${fx}">${rotFaixa}</span>${p.zonas.split(' · ').map(z => `<span class="tag zona">${esc(z)}</span>`).join('')}</div>
+    <div class="tags"><span class="tag t${fx}">${rotFaixa}</span>${p.zonas.split(' · ').map(z => `<span class="tag zona">${esc(z)}</span>`).join('')}${p.vila ? `<span class="tag vila">Vila ${p.vila}</span>` : ''}</div>
     <div class="cartoes">
       <div class="cartao"><span>Área somada</span><b>${fmt(p.area)}</b> <small>m²</small></div>
       <div class="cartao"><span>Área equivalente</span><b>${fmt(p.area_eq)}</b> <small>m²</small></div>
       <div class="cartao"><span>Lotes</span><b>${p.n}</b></div>
     </div>
+    ${p.vila === 'completa' ? `<div class="alerta info">Inclui uma <b>vila completa</b>: a passagem (em azul no mapa) e todas as casas que dão para ela estão na mancha. A área da passagem está somada.</div>` : ''}
+    ${p.vila === 'parcial' ? `<div class="alerta">Inclui <b>passagem de vila</b> (em azul no mapa), mas alguma casa que encosta nela ficou de fora da mancha — tombada, prédio ou fora de ZEU/ZC. Confira se a vila pode ser comprada inteira.</div>` : ''}
     ${p.env ? `<div class="alerta">⚠ Parte da mancha está em <b>área envoltória de bem tombado</b> (${esc(p.env)}). Projetos aqui dependem de aprovação do órgão de patrimônio.</div>` : ''}
     <h2>Forma do terreno unificado · nota ${p.forma}/100</h2>
     <div class="metricas">
@@ -440,7 +447,7 @@ function sincronizarControles() {
   $('#f-area').value = est.area; $('#f-forma').value = est.forma;
   $('#f-nmax').value = est.nmax; $('#f-est').value = est.est; $('#f-pnr').value = est.pnr;
   $('#o-pnr').textContent = est.pnr >= 100 ? 'sem limite' : `${est.pnr}%`;
-  $('#f-zeu').checked = est.zeu; $('#f-zc').checked = est.zc; $('#f-env').checked = est.env;
+  $('#f-zeu').checked = est.zeu; $('#f-zc').checked = est.zc; $('#f-env').checked = est.env; $('#f-vila').checked = est.vila;
   $('#so-tela').checked = est.soTela; $('#ordem').value = est.ordem;
   $('#o-area').textContent = fmt(est.area); $('#o-forma').textContent = est.forma;
   $('#o-nmax').textContent = est.nmax >= NMAX_SEM_LIMITE ? 'sem limite' : est.nmax;
@@ -455,7 +462,7 @@ function ligarInterface() {
     sincronizarControles(); aplicar();
   });
   liga('#f-area', 'area'); liga('#f-forma', 'forma'); liga('#f-nmax', 'nmax'); liga('#f-est', 'est'); liga('#f-pnr', 'pnr');
-  liga('#f-zeu', 'zeu'); liga('#f-zc', 'zc'); liga('#f-env', 'env'); liga('#so-tela', 'soTela');
+  liga('#f-zeu', 'zeu'); liga('#f-zc', 'zc'); liga('#f-env', 'env'); liga('#f-vila', 'vila'); liga('#so-tela', 'soTela');
   liga('#ordem', 'ordem', String);
   let t;
   $('#busca').addEventListener('input', e => {
@@ -503,10 +510,10 @@ function ligarInterface() {
     baixarCSV('manchas.csv',
       ['ID (setor-quadra-lote)', 'Distrito', 'Ruas', 'Zonas', 'Área somada (m²)', 'Área IPTU (m²)', 'Área equivalente (m²)',
         'Faixa', 'Lotes', 'Nota de forma', 'Retangularidade', 'Miolo aproveitável', 'Perímetro×área', 'Vértices',
-        'Área construída (m²)', 'CA médio', 'Usos', 'Envoltória', 'Estação mais próxima', 'Distância (m)', 'Latitude', 'Longitude', 'Link'],
+        'Área construída (m²)', 'CA médio', 'Usos', 'Vila', 'Envoltória', 'Estação mais próxima', 'Distância (m)', 'Latitude', 'Longitude', 'Link'],
       l.map(m => { const p = m.properties; return [p.id, p.distrito, p.ruas, p.zonas, p.area, p.area_iptu, p.area_eq,
         ['forma compromete', 'vermelho', 'amarelo', 'verde'][p.faixa], p.n, p.forma, p.ret, p.miolo, p.comp, p.nv, p.ac,
-        String(p.ca).replace('.', ','), p.usos, p.env, p.est, p.est_m, String(p.lat).replace('.', ','), String(p.lon).replace('.', ','),
+        String(p.ca).replace('.', ','), p.usos, p.vila, p.env, p.est, p.est_m, String(p.lat).replace('.', ','), String(p.lon).replace('.', ','),
         `${location.origin}${location.pathname}#m=${p.id}`]; }));
   };
   $('#btn-criterios').onclick = () => $('#criterios').showModal();

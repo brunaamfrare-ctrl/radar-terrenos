@@ -12,6 +12,7 @@ O site é estático e fica na pasta `docs/` (publicado pelo GitHub Pages).
 |---|---|
 | Lote elegível | Lote fiscal do GeoSampa, fora de condomínio ("CD"), com área construída ÷ área do terreno ≤ 4, com ≥ 50% da área em ZEU/ZEUa/ZEUP/ZEUPa/ZC/ZCa/ZC-ZEIS (Lei 18.177/24) e não tombado |
 | Mancha | Lotes elegíveis com divisa comum ≥ 3 m, somando ≥ 2.500 m² |
+| Vilas | A passagem de vila (lote "V" — via de acesso) entra como elo: une as casas dos dois lados e soma área, sem contar como lote a negociar. A vila é "completa" quando toda casa que encosta na passagem está na mancha |
 | Nota de forma (0–100) | 30% retangularidade · 30% miolo aproveitável (largura ≥ 20 m) · 20% perímetro × área · 20% nº de vértices (ideal ≤ 7) |
 | Área equivalente | área × min(1, nota ÷ 80) |
 | Cor | vermelho ≥ 2.500 m² · amarelo ≥ 4.000 m² · verde ≥ 6.000 m² (de área equivalente); cinza quando a forma derruba a área equivalente abaixo de 2.500 m² |
