@@ -1,0 +1,4 @@
+numpy
+pyproj
+requests
+shapely>=2.0

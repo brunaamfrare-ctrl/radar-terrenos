@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar de Terrenos — São Paulo</title>
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div id="app">
+  <aside id="painel">
+    <header>
+      <div class="marca">
+        <span class="logo" aria-hidden="true"></span>
+        <div>
+          <h1>Radar de Terrenos</h1>
+          <p id="subtitulo">São Paulo · carregando dados…</p>
+        </div>
+      </div>
+      <button id="btn-criterios" class="link" type="button">Como funciona</button>
+    </header>
+
+    <div id="abas" role="tablist">
+      <button role="tab" data-aba="lista" class="ativa" type="button">Oportunidades</button>
+      <button role="tab" data-aba="filtros" type="button">Filtros e camadas</button>
+    </div>
+
+    <section id="aba-lista" class="aba">
+      <div class="busca">
+        <input id="busca" type="search" placeholder="Buscar rua, distrito ou setor-quadra…" autocomplete="off">
+      </div>
+      <div class="legenda" id="legenda"></div>
+      <div class="barra-lista">
+        <span id="contagem">—</span>
+        <button id="btn-csv" class="link" type="button" title="Exporta todas as manchas que passam nos filtros">Exportar CSV</button>
+      </div>
+      <div class="barra-lista ordem">
+        <label class="mini">Ordenar
+          <select id="ordem">
+            <option value="area">maior área</option>
+            <option value="forma">melhor forma</option>
+            <option value="lote">maiores lotes (menos donos)</option>
+            <option value="metro">mais perto de metrô/trem</option>
+          </select></label>
+        <label class="mini"><input type="checkbox" id="so-tela" checked> só na tela</label>
+      </div>
+      <ol id="lista"></ol>
+    </section>
+
+    <section id="aba-filtros" class="aba" hidden>
+      <h2>Cor das manchas</h2>
+      <div class="segmento" id="modo-cor">
+        <button type="button" data-modo="faixa" class="ativa" title="Área × fator de forma">Potencial (área + forma)</button>
+        <button type="button" data-modo="faixa_area" title="Somente a área somada dos lotes">Só área</button>
+      </div>
+
+      <h2>Filtros</h2>
+      <label class="campo">Área mínima da mancha
+        <span class="valor"><output id="o-area"></output> m²</span>
+        <input type="range" id="f-area" min="2500" max="15000" step="250" value="2500">
+      </label>
+      <label class="campo">Nota de forma mínima
+        <span class="valor"><output id="o-forma"></output> / 100</span>
+        <input type="range" id="f-forma" min="0" max="100" step="5" value="0">
+      </label>
+      <label class="campo">Nº máximo de lotes a negociar
+        <span class="valor"><output id="o-nmax"></output></span>
+        <input type="range" id="f-nmax" min="1" max="61" step="1" value="61">
+      </label>
+      <label class="campo">Distância máxima de metrô/trem
+        <span class="valor"><output id="o-est"></output></span>
+        <input type="range" id="f-est" min="200" max="2100" step="100" value="2100">
+      </label>
+      <label class="campo">Máx. da área em imóveis não residenciais
+        <span class="valor"><output id="o-pnr"></output></span>
+        <input type="range" id="f-pnr" min="0" max="100" step="10" value="50">
+        <small class="ajuda">Galpões, comércios, escolas etc. Em 50% ficam as manchas formadas principalmente por casas e terrenos.</small>
+      </label>
+      <div class="checks">
+        <label><input type="checkbox" id="f-zeu" checked> ZEU <small>(ZEU, ZEUa, ZEUP, ZEUPa)</small></label>
+        <label><input type="checkbox" id="f-zc" checked> ZC <small>(ZC, ZCa, ZC-ZEIS)</small></label>
+        <label><input type="checkbox" id="f-env"> Ocultar manchas em área envoltória de tombamento</label>
+      </div>
+
+      <h2>Camadas</h2>
+      <div class="segmento" id="base">
+        <button type="button" data-base="mapa" class="ativa">Mapa</button>
+        <button type="button" data-base="satelite">Satélite</button>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" data-camada="zonas" checked> <i class="am zeu"></i><i class="am zc"></i> Zoneamento ZEU / ZC</label>
+        <label><input type="checkbox" data-camada="tombados" checked> <i class="am tomb"></i> Bens tombados</label>
+        <label><input type="checkbox" data-camada="envoltorias"> <i class="am env"></i> Áreas envoltórias</label>
+        <label><input type="checkbox" data-camada="estacoes" checked> <i class="am est"></i> Estações de metrô e trem</label>
+      </div>
+      <button id="btn-limpar" class="secundario" type="button">Restaurar filtros</button>
+    </section>
+
+    <section id="detalhe" hidden></section>
+  </aside>
+
+  <button id="alternar" type="button" aria-label="Mostrar ou ocultar painel">☰</button>
+  <div id="mapa"></div>
+  <div id="aviso" hidden></div>
+</div>
+
+<dialog id="criterios">
+  <form method="dialog"><button class="fechar" aria-label="Fechar">×</button></form>
+  <h2>Como o radar funciona</h2>
+  <ol>
+    <li><b>Lotes elegíveis.</b> Lotes fiscais do GeoSampa em zona <b>ZEU</b> ou <b>ZC</b> (Lei 18.177/24),
+      fora de condomínio (os “CD”), <b>não tombados</b> e com
+      <b>área construída ÷ área do terreno ≤ <span data-p="ca"></span></b> — acima disso é tratado como prédio.</li>
+    <li><b>Manchas.</b> Lotes elegíveis vizinhos (divisa comum de pelo menos <span data-p="divisa"></span> m) são
+      somados. A mancha aparece quando a soma chega a <b><span data-p="amin"></span> m²</b>.</li>
+    <li><b>Nota de forma (0–100).</b> Média ponderada de quatro medidas do terreno unificado:
+      <ul>
+        <li><b>Retangularidade</b> (<span data-p="p-ret"></span>%) — quanto do menor retângulo envolvente o terreno preenche.</li>
+        <li><b>Miolo aproveitável</b> (<span data-p="p-miolo"></span>%) — parcela da área com pelo menos <span data-p="largura"></span> m de largura; “dentes” e corredores estreitos não contam.</li>
+        <li><b>Perímetro × área</b> (<span data-p="p-comp"></span>%) — perímetro de um quadrado de mesma área ÷ perímetro real.</li>
+        <li><b>Vértices</b> (<span data-p="p-vert"></span>%) — nota máxima até <span data-p="vi"></span> vértices, caindo a zero em <span data-p="vr"></span>.</li>
+      </ul></li>
+    <li><b>Cor.</b> Área equivalente = área × fator de forma (nota ≥ <span data-p="fsp"></span> não desconta nada; abaixo disso desconta proporcionalmente).
+      <span class="tag t1">≥ 2.500 m²</span> <span class="tag t2">≥ 4.000 m²</span> <span class="tag t3">≥ 6.000 m²</span>
+      <span class="tag t0">área ≥ 2.500 m², mas a forma derruba</span></li>
+  </ol>
+  <p class="nota">Áreas envoltórias de tombamento não descartam o lote, mas a mancha recebe um alerta.
+    A área usada é a do desenho do lote no GeoSampa; a área do IPTU aparece ao lado para conferência.
+    É uma triagem: confirme matrícula, zoneamento e restrições antes de avançar.</p>
+  <p class="nota" id="meta-rodape"></p>
+</dialog>
+
+<script src="vendor/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
