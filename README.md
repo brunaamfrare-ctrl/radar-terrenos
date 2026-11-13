@@ -1,8 +1,9 @@
 # Radar de Terrenos — São Paulo
 
-Mapa para prospecção de terrenos: encontra **manchas de lotes de casas contíguos**
-em zonas **ZEU** e **ZC** que, unificados, somam pelo menos **2.500 m²**, e classifica
-cada mancha por área e por formato.
+Mapa para prospecção de terrenos: encontra **manchas de lotes de casas contíguos**, do mesmo
+zoneamento, que unificados somam pelo menos **2.500 m²**, e classifica cada mancha por área e
+por formato. Todos os zoneamentos da cidade são processados; no mapa você marca quais quer ver
+(padrão: ZEU, ZC, ZEIS-5 e ZEM).
 
 O site é estático e fica na pasta `docs/` (publicado pelo GitHub Pages).
 
@@ -10,12 +11,20 @@ O site é estático e fica na pasta `docs/` (publicado pelo GitHub Pages).
 
 | Etapa | Regra |
 |---|---|
-| Lote elegível | Lote fiscal do GeoSampa, fora de condomínio ("CD"), com área construída ÷ área do terreno ≤ 4, com ≥ 50% da área em ZEU/ZEUa/ZEUP/ZEUPa/ZC/ZCa/ZC-ZEIS (Lei 18.177/24) e não tombado |
-| Mancha | Lotes elegíveis com divisa comum ≥ 3 m, somando ≥ 2.500 m² |
+| Lote elegível | Lote fiscal do GeoSampa, fora de condomínio ("CD"), com área construída ÷ área do terreno ≤ 4 |
+| Exclusões | Tombado · em área envoltória (CONPRESP/CONDEPHAAT/IPHAN) · atingido por área cedida, cadastro de área pública (CAP), diretriz (DZ), desmembramento de gleba (DG) ou conjunto (CJ) · hospital, escola estadual, polícia civil/militar e guarda civil (cadastros de equipamentos do GeoSampa) · provável lançamento (terreno sem construção, sem número, com 1.000 m² ou mais) |
+| Mancha | Lotes elegíveis do mesmo zoneamento (Lei 18.177/24) com divisa comum ≥ 3 m, somando ≥ 2.500 m² |
 | Vilas | A passagem de vila (lote "V" — via de acesso) entra como elo: une as casas dos dois lados e soma área, sem contar como lote a negociar. A vila é "completa" quando toda casa que encosta na passagem está na mancha |
+| Alertas (não excluem) | Lote atingido por melhoramento viário, desapropriação (DUP/DIS), unidade geotécnica I da carta de 2024, área contaminada ou com potencial de contaminação, ou parcelamento aprovado como Passagem – PS |
 | Nota de forma (0–100) | 30% retangularidade · 30% miolo aproveitável (largura ≥ 20 m) · 20% perímetro × área · 20% nº de vértices (ideal ≤ 7) |
 | Área equivalente | área × min(1, nota ÷ 80) |
 | Cor | vermelho ≥ 2.500 m² · amarelo ≥ 4.000 m² · verde ≥ 6.000 m² (de área equivalente); cinza quando a forma derruba a área equivalente abaixo de 2.500 m² |
+
+Um lote é considerado "atingido" por uma camada quando a sobreposição tem pelo menos 10 m² (ou 5%
+do lote, o que for menor) e mais de 1,5 m de largura — filetes de desenho na divisa são ignorados.
+
+**Ainda sem fonte de dados:** igrejas e fundações não têm cadastro no GeoSampa, e a lista de
+hospitais do GeoSampa cobre principalmente a rede pública.
 
 Todos os parâmetros estão no topo de `scripts/processar.py`.
 
@@ -23,8 +32,8 @@ Todos os parâmetros estão no topo de `scripts/processar.py`.
 
 ```bash
 pip install -r requirements.txt
-python3 scripts/baixar_dados.py   # ~20 min: baixa lotes, zoneamento e patrimônio do GeoSampa
-python3 scripts/processar.py      # ~5 min: gera docs/dados/
+python3 scripts/baixar_dados.py   # ~40 min: baixa todos os lotes, zoneamento e restrições do GeoSampa
+python3 scripts/processar.py      # ~15 min: gera docs/dados/
 ```
 
 Depois é só fazer commit da pasta `docs/dados/`.
@@ -32,7 +41,9 @@ Depois é só fazer commit da pasta `docs/dados/`.
 ## Fontes
 
 GeoSampa / Prefeitura de São Paulo (WFS): `lote_cidadao`, `perimetro_zona_lei_18177_24`,
-`patrimonio_cultural_bem_tombado`, áreas envoltórias CONPRESP/CONDEPHAAT/IPHAN,
-distritos e estações de metrô/trem.
+bens tombados e áreas envoltórias, área cedida, CAP, passagem, diretriz, desmembramento de gleba,
+conjunto, lei de melhoramento viário vigente, plantas DUP/DIS, carta geotécnica 2024, áreas
+contaminadas (SVMA e SIGAC), equipamentos de saúde, educação e segurança, distritos e estações
+de metrô/trem.
 
 É uma ferramenta de triagem. Confirme matrícula, zoneamento e restrições antes de avançar em qualquer negociação.

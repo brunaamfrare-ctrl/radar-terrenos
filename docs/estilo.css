@@ -113,8 +113,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .am { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex: none; }
 .am.zeu { background: color-mix(in srgb, var(--zeu) 35%, white); border: 1.5px solid var(--zeu); }
 .am.zc { background: color-mix(in srgb, var(--zc) 35%, white); border: 1.5px solid var(--zc); margin-left: -3px; }
-.am.tomb { background: repeating-linear-gradient(45deg, #6b4423 0 2px, #e9dccf 2px 4px); border: 1px solid #6b4423; }
-.am.env { border: 1.5px dashed #6b4423; }
+.am.tomb { background: #b4bac2; border: 1px solid #6b7280; }
+.am.env { background: #d5d8dd; border: 1.5px dashed #374151; }
+.am.alr { background: #fbd5bd; border: 1.5px solid #c2410c; }
 .am.est { border-radius: 50%; background: #fff; border: 3px solid var(--tinta); }
 
 .segmento { display: flex; border: 1px solid var(--linha); border-radius: 8px; overflow: hidden; }
@@ -211,3 +212,35 @@ dialog .fechar { position: absolute; top: 10px; right: 12px; background: none; b
 .barra-lista:not(.ordem) { border-bottom: 0; padding-bottom: 0; }
 .tag.vila { background: #e7eaff; color: #2a3aa8; border: 1px solid #c3caf5; }
 .alerta.info { background: #eef1ff; border-color: #c3caf5; color: #24327f; }
+
+/* ------------------------------------------------- caixa de zoneamentos */
+#zonas-caixa { margin-top: 10px; border: 1px solid var(--linha); border-radius: 8px; background: #fff; }
+#zonas-caixa summary {
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; font-size: 13px;
+}
+#zonas-caixa summary::-webkit-details-marker { display: none; }
+#zonas-caixa summary::after { content: "▾"; margin-left: auto; color: var(--tinta-2); }
+#zonas-caixa[open] summary::after { content: "▴"; }
+#zonas-caixa .rot { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--tinta-2); flex: none; }
+#zonas-resumo { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#zonas-lista { max-height: 250px; overflow-y: auto; border-top: 1px solid var(--linha); padding: 4px 0; }
+#zonas-lista label {
+  display: grid; grid-template-columns: auto auto 62px minmax(0, 1fr) auto; gap: 7px; align-items: center;
+  padding: 4px 10px; font-size: 12.5px; cursor: pointer;
+}
+#zonas-lista label:hover { background: var(--fundo-2); }
+#zonas-lista input { accent-color: var(--tinta); margin: 0; }
+#zonas-lista .zc { font-weight: 600; }
+#zonas-lista .zn { color: var(--tinta-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+#zonas-lista .zq { color: var(--tinta-2); font-variant-numeric: tabular-nums; font-size: 12px; }
+.zonas-pe { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 7px 10px;
+  border-top: 1px solid var(--linha); font-size: 11.5px; color: var(--tinta-2); }
+
+/* -------------------------------------------------------- dica e alertas */
+.dica-t { border-collapse: collapse; }
+.dica-t td { padding: 1px 0; vertical-align: top; }
+.dica-t td:first-child { color: var(--tinta-2); padding-right: 12px; white-space: nowrap; }
+.dica .al { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--linha); color: #8a4b00; font-size: 12px; }
+.dica .al + .al { margin-top: 2px; padding-top: 0; border-top: 0; }
+.alerta ul { margin: 4px 0 4px; padding-left: 18px; }
+.lote-al { color: #8a4b00; font-size: 11px; margin-top: 1px; }

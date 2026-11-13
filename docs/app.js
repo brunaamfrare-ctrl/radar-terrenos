@@ -13,22 +13,38 @@ const ROTULOS = {
     1: ['2.500 – 4.000 m²', 'área somada'],
   },
 };
-const PADRAO = { modo: 'faixa', area: 2500, forma: 0, nmax: 61, est: 2100, pnr: 50, zeu: true, zc: true,
-  env: false, vila: false, ordem: 'area', faixas: { 0: true, 1: true, 2: true, 3: true }, busca: '', soTela: true };
+// Alertas: não excluem a mancha, mas aparecem ao passar o mouse e na ficha.
+const ALERTAS = {
+  mv: 'Melhoramento viário',
+  de: 'Desapropriação (DUP/DIS)',
+  g1: 'Unidade geotécnica I (planície aluvial)',
+  cs: 'Área contaminada ou reabilitada',
+  cp: 'Potencial ou suspeita de contaminação',
+  ps: 'Passagem – PS (parcelamento de vila)',
+};
+const COR_ZONA = { ZEU: '#7c4dcc', ZC: '#1d84c9', 'ZEIS-5': '#0f9b8e', ZEM: '#d6409f' };
+const PALETA = ['#b45309', '#4d7c0f', '#be123c', '#0369a1', '#7e22ce', '#a16207', '#15803d', '#9f1239', '#475569', '#c2410c'];
+const PADRAO = { modo: 'faixa', area: 2500, forma: 0, nmax: 61, est: 2100, pnr: 50,
+  vila: false, semAlerta: false, ordem: 'area', faixas: { 0: true, 1: true, 2: true, 3: true }, busca: '', soTela: true };
 const ZOOM_LOTES = 15;
 const NMAX_SEM_LIMITE = 61, EST_SEM_LIMITE = 2100;
+const CHAVE_ZONAS = 'radar-terrenos.zonas';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const fmt = n => Math.round(n).toLocaleString('pt-BR');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const plural = (n, s, p) => `${fmt(n)} ${n === 1 ? s : p}`;
 
 let est = structuredClone(PADRAO);
-let manchas = [], porId = new Map(), meta = null, celulas = new Set();
-let selecionada = null;
-const cacheLotes = new Map();
-let CEL = 0.02;
+let meta = null, manchas = [], porId = new Map(), selecionada = null;
+const zonaInfo = new Map();          // código -> { cod, arq, nome, manchas, celulas:Set, cor }
+let zonasSel = new Set();            // zoneamentos marcados
+const cacheManchas = new Map();      // código -> Promise<feições>
+const cacheZonas = new Map();        // código -> Promise<feição do perímetro>
+const cacheLotes = new Map();        // "ZONA/célula" -> Promise<feições>
+let CEL = 0.01;
 
 /* ------------------------------------------------------------------ mapa */
 const bases = {
@@ -58,11 +74,12 @@ map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-ri
 map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 map.addControl(new maplibregl.AttributionControl({ compact: true,
-  customAttribution: 'Lotes, zoneamento e patrimônio: <a href="https://geosampa.prefeitura.sp.gov.br" target="_blank" rel="noopener">GeoSampa / PMSP</a>' }), 'bottom-right');
+  customAttribution: 'Lotes, zoneamento e restrições: <a href="https://geosampa.prefeitura.sp.gov.br" target="_blank" rel="noopener">GeoSampa / PMSP</a>' }), 'bottom-right');
 map.dragRotate.disable();
 map.touchZoomRotate.disableRotation();
 
-const vazio = () => ({ type: 'FeatureCollection', features: [] });
+const fc = feats => ({ type: 'FeatureCollection', features: feats || [] });
+
 // Arquivos .gz são descomprimidos no navegador (GitHub Pages os entrega como binário).
 async function dados(nome) {
   const r = await fetch(`dados/${nome}`);
@@ -74,10 +91,23 @@ async function dados(nome) {
   return new Response(fluxo).json();
 }
 
-function exprCor() {
-  return ['match', ['get', est.modo], 3, CORES[3], 2, CORES[2], 1, CORES[1], CORES[0]];
-}
+const exprCor = () => ['match', ['get', est.modo], 3, CORES[3], 2, CORES[2], 1, CORES[1], CORES[0]];
+const exprContorno = () => ['match', ['get', est.modo], 3, '#12662f', 2, '#8a6700', 1, '#9c1f24', '#555a63'];
 
+const alertasDe = p => Object.keys(ALERTAS).filter(k => p['a_' + k]);
+
+function passaBusca(m) { return !est.busca || m._texto.includes(est.busca); }
+function passa(m) {
+  const p = m.properties;
+  if (p.area < est.area || p.forma < est.forma) return false;
+  if (!est.faixas[p[est.modo]]) return false;
+  if (est.nmax < NMAX_SEM_LIMITE && p.n > est.nmax) return false;
+  if (est.est < EST_SEM_LIMITE && p.est_m > est.est) return false;
+  if (est.pnr < 100 && p.pnr > est.pnr) return false;
+  if (est.vila && !p.vila) return false;
+  if (est.semAlerta && m._alerta) return false;
+  return passaBusca(m);
+}
 function exprFiltro() {
   const f = ['all',
     ['>=', ['get', 'area'], est.area],
@@ -87,94 +117,64 @@ function exprFiltro() {
   if (est.nmax < NMAX_SEM_LIMITE) f.push(['<=', ['get', 'n'], est.nmax]);
   if (est.est < EST_SEM_LIMITE) f.push(['<=', ['get', 'est_m'], est.est]);
   if (est.pnr < 100) f.push(['<=', ['get', 'pnr'], est.pnr]);
-  if (est.env) f.push(['==', ['get', 'env'], '']);
   if (est.vila) f.push(['!=', ['get', 'vila'], '']);
-  if (!(est.zeu && est.zc)) {
-    const fams = [];
-    if (est.zeu) fams.push('ZEU', 'ZC+ZEU');
-    if (est.zc) fams.push('ZC', 'ZC+ZEU');
-    f.push(['in', ['get', 'fam'], ['literal', fams]]);
-  }
+  if (est.semAlerta) f.push(['!', ['boolean', ['get', '_al'], false]]);
   if (est.busca) f.push(['in', ['get', 'id'], ['literal', manchas.filter(passaBusca).map(m => m.properties.id)]]);
   return f;
 }
 
-function passaBusca(m) {
-  if (!est.busca) return true;
-  return m._texto.includes(est.busca);
-}
-function passa(m) {
-  const p = m.properties;
-  if (p.area < est.area || p.forma < est.forma) return false;
-  if (!est.faixas[p[est.modo]]) return false;
-  if (est.nmax < NMAX_SEM_LIMITE && p.n > est.nmax) return false;
-  if (est.est < EST_SEM_LIMITE && p.est_m > est.est) return false;
-  if (est.pnr < 100 && p.pnr > est.pnr) return false;
-  if (est.env && p.env) return false;
-  if (est.vila && !p.vila) return false;
-  if (!est.zeu && !p.fam.includes('ZC')) return false;
-  if (!est.zc && !p.fam.includes('ZEU')) return false;
-  return passaBusca(m);
-}
-
 map.on('load', async () => {
-  let zonas, tombados, envolt, estacoes, fc;
+  let tombados, estacoes;
   try {
-    [meta, fc, zonas, tombados, envolt, estacoes] = await Promise.all([
-      dados('meta.json'), dados('manchas.geojson.gz'), dados('zonas.geojson.gz'),
-      dados('tombados.geojson.gz'), dados('envoltorias.geojson.gz'), dados('estacoes.geojson')]);
+    [meta, tombados, estacoes] = await Promise.all([
+      dados('meta.json'), dados('tombados.geojson.gz'), dados('estacoes.geojson')]);
   } catch (e) {
     $('#subtitulo').textContent = 'Não foi possível carregar os dados.';
     console.error(e);
     return;
   }
   CEL = meta.parametros.celula_lotes;
-  manchas = fc.features;
-  for (const m of manchas) {
-    const p = m.properties;
-    porId.set(p.id, m);
-    celulas.add(p.cel);
-    m._texto = semAcento(`${p.ruas} ${p.distrito} ${p.id} ${p.zonas}`);
+  let n = 0;
+  for (const z of meta.zonas) {
+    zonaInfo.set(z.cod, { ...z, celulas: new Set(z.celulas), cor: COR_ZONA[z.cod] || PALETA[n++ % PALETA.length] });
   }
 
-  map.addSource('zonas', { type: 'geojson', data: zonas });
-  map.addSource('tombados', { type: 'geojson', data: tombados });
-  map.addSource('envoltorias', { type: 'geojson', data: envolt });
-  map.addSource('estacoes', { type: 'geojson', data: estacoes });
-  map.addSource('manchas', { type: 'geojson', data: fc, promoteId: 'id' });
-  map.addSource('pontos', { type: 'geojson', data: { type: 'FeatureCollection', features: manchas.map(m => ({
-    type: 'Feature', properties: m.properties,
-    geometry: { type: 'Point', coordinates: [m.properties.lon, m.properties.lat] } })) } });
-  map.addSource('lotes', { type: 'geojson', data: vazio() });
-  map.addSource('selecao', { type: 'geojson', data: vazio() });
-  map.addSource('lote-sel', { type: 'geojson', data: vazio() });
+  for (const s of ['zonas', 'tombados', 'restricoes', 'alertas', 'estacoes', 'pontos', 'lotes', 'selecao', 'lote-sel']) {
+    map.addSource(s, { type: 'geojson', data: fc() });
+  }
+  map.addSource('manchas', { type: 'geojson', data: fc(), promoteId: 'id' });
+  map.getSource('tombados').setData(tombados);
+  map.getSource('estacoes').setData(estacoes);
 
-  const corZona = ['match', ['get', 'fam'], 'ZEU', '#7c4dcc', '#1d84c9'];
   map.addLayer({ id: 'zonas-fill', type: 'fill', source: 'zonas',
-    paint: { 'fill-color': corZona, 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.14, 15, 0.10] } });
+    paint: { 'fill-color': ['get', 'cor'], 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.14, 15, 0.10] } });
   map.addLayer({ id: 'zonas-line', type: 'line', source: 'zonas', minzoom: 12.5,
-    paint: { 'line-color': corZona, 'line-width': 1, 'line-opacity': 0.55 } });
-  map.addLayer({ id: 'envoltorias-line', type: 'line', source: 'envoltorias', layout: { visibility: 'none' },
-    paint: { 'line-color': '#6b4423', 'line-width': 1.4, 'line-dasharray': [3, 2] } });
-  map.addLayer({ id: 'envoltorias-fill', type: 'fill', source: 'envoltorias', layout: { visibility: 'none' },
-    paint: { 'fill-color': '#6b4423', 'fill-opacity': 0.06 } });
+    paint: { 'line-color': ['get', 'cor'], 'line-width': 1, 'line-opacity': 0.55 } });
+  map.addLayer({ id: 'restricoes-fill', type: 'fill', source: 'restricoes', layout: { visibility: 'none' },
+    paint: { 'fill-color': '#4b5563', 'fill-opacity': 0.22 } });
+  map.addLayer({ id: 'restricoes-line', type: 'line', source: 'restricoes', layout: { visibility: 'none' },
+    paint: { 'line-color': '#374151', 'line-width': 1, 'line-dasharray': [3, 2] } });
 
   map.addLayer({ id: 'manchas-fill', type: 'fill', source: 'manchas', minzoom: 12.5,
     paint: { 'fill-color': exprCor(),
       'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.8, 0.58] } });
-  map.addLayer({ id: 'lotes-line', type: 'line', source: 'lotes', minzoom: ZOOM_LOTES,
-    paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 0.5, 18, 1.4], 'line-opacity': 0.9 } });
   map.addLayer({ id: 'vias-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES, filter: ['==', ['get', 'v'], 1],
     paint: { 'fill-color': '#3b4fd6', 'fill-opacity': 0.5 } });
+  map.addLayer({ id: 'lotes-line', type: 'line', source: 'lotes', minzoom: ZOOM_LOTES,
+    paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 0.5, 18, 1.4], 'line-opacity': 0.9 } });
   map.addLayer({ id: 'lotes-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES,
     paint: { 'fill-color': '#000', 'fill-opacity': 0 } });
   map.addLayer({ id: 'manchas-line', type: 'line', source: 'manchas', minzoom: 12.5,
-    paint: { 'line-color': ['match', ['get', est.modo], 3, '#12662f', 2, '#8a6700', 1, '#9c1f24', '#555a63'],
+    paint: { 'line-color': exprContorno(),
       'line-width': ['interpolate', ['linear'], ['zoom'], 12.5, 0.6, 17, 2.2] } });
+  map.addLayer({ id: 'alertas-line', type: 'line', source: 'alertas', layout: { visibility: 'none' },
+    paint: { 'line-color': '#c2410c', 'line-width': 1.2 } });
+  map.addLayer({ id: 'alertas-fill', type: 'fill', source: 'alertas', layout: { visibility: 'none' },
+    paint: { 'fill-color': '#ea580c', 'fill-opacity': ['match', ['get', 't'], 'g1', 0.08, 0.28] } });
   map.addLayer({ id: 'tombados-fill', type: 'fill', source: 'tombados', minzoom: 13,
-    paint: { 'fill-color': '#6b4423', 'fill-opacity': 0.45 } });
+    paint: { 'fill-color': '#9aa1ab', 'fill-opacity': 0.55 } });
   map.addLayer({ id: 'tombados-line', type: 'line', source: 'tombados', minzoom: 13,
-    paint: { 'line-color': '#4a2e16', 'line-width': 0.8 } });
+    paint: { 'line-color': '#6b7280', 'line-width': 0.7 } });
   map.addLayer({ id: 'pontos', type: 'circle', source: 'pontos', maxzoom: 12.5,
     layout: { 'circle-sort-key': ['get', 'area_eq'] },
     paint: { 'circle-color': exprCor(), 'circle-stroke-color': '#fff', 'circle-stroke-width': 0.6,
@@ -183,24 +183,87 @@ map.on('load', async () => {
   map.addLayer({ id: 'estacoes', type: 'circle', source: 'estacoes', minzoom: 11.5,
     paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 11.5, 2.5, 16, 6], 'circle-color': '#fff',
       'circle-stroke-color': '#1c2430', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 11.5, 1.5, 16, 3] } });
-  map.addLayer({ id: 'lote-sel', type: 'line', source: 'lote-sel',
-    paint: { 'line-color': '#0f5fd7', 'line-width': 3 } });
   map.addLayer({ id: 'selecao-halo', type: 'line', source: 'selecao',
     paint: { 'line-color': '#fff', 'line-width': 6 } });
   map.addLayer({ id: 'selecao', type: 'line', source: 'selecao',
     paint: { 'line-color': '#1c2430', 'line-width': 2.6 } });
-  map.moveLayer('lote-sel');
+  map.addLayer({ id: 'lote-sel', type: 'line', source: 'lote-sel',
+    paint: { 'line-color': '#0f5fd7', 'line-width': 3 } });
 
   $('#subtitulo').textContent = `São Paulo · dados GeoSampa de ${meta.gerado_em.split('-').reverse().join('/')}`;
   preencherCriterios();
-  lerHash();
+
+  // zoneamentos marcados: link > última escolha neste navegador > padrão
+  const h = new URLSearchParams(location.hash.slice(1));
+  const [zLink, idLink] = (h.get('m') || '').includes('~') ? h.get('m').split('~') : [null, null];
+  let salvas = null;
+  try { salvas = JSON.parse(localStorage.getItem(CHAVE_ZONAS)); } catch { /* sem armazenamento */ }
+  zonasSel = new Set((Array.isArray(salvas) && salvas.length ? salvas : meta.zonas_padrao).filter(z => zonaInfo.has(z)));
+  if (zLink && zonaInfo.has(zLink)) zonasSel.add(zLink);
+
   ligarInterface();
-  aplicar();
   interacoes();
+  await trocarZonas();
   map.on('moveend', () => { atualizarLista(); carregarLotes(); gravarHash(); });
-  carregarLotes();
-  if (est._abrir && porId.has(est._abrir)) selecionar(est._abrir, true);
+  if (idLink && porId.has(idLink)) selecionar(idLink, true);
 });
+
+/* ------------------------------------------------------------ zoneamentos */
+function buscarManchas(z) {
+  if (!cacheManchas.has(z)) {
+    cacheManchas.set(z, dados(`manchas/${zonaInfo.get(z).arq}.geojson.gz`).then(d => {
+      for (const m of d.features) {
+        const p = m.properties;
+        m._alerta = alertasDe(p).length > 0;
+        p._al = m._alerta;
+        m._texto = semAcento(`${p.ruas} ${p.distrito} ${p.id} ${p.zona}`);
+      }
+      return d.features;
+    }).catch(e => { cacheManchas.delete(z); console.error(e); return []; }));
+  }
+  return cacheManchas.get(z);
+}
+function buscarPerimetro(z) {
+  if (!cacheZonas.has(z)) {
+    cacheZonas.set(z, dados(`zonas/${zonaInfo.get(z).arq}.geojson.gz`).then(d => {
+      d.features.forEach(f => { f.properties.cor = zonaInfo.get(z).cor; });
+      return d.features;
+    }).catch(() => { cacheZonas.delete(z); return []; }));
+  }
+  return cacheZonas.get(z);
+}
+
+let trocaAtual = 0;
+async function trocarZonas() {
+  const minha = ++trocaAtual;
+  const lista = [...zonasSel];
+  try { localStorage.setItem(CHAVE_ZONAS, JSON.stringify(lista)); } catch { /* sem armazenamento */ }
+  desenharSeletor();
+  $('#contagem').textContent = 'Carregando zoneamentos…';
+  const [ms, ps] = await Promise.all([
+    Promise.all(lista.map(buscarManchas)), Promise.all(lista.map(buscarPerimetro))]);
+  if (minha !== trocaAtual) return;
+  manchas = ms.flat();
+  porId = new Map(manchas.map(m => [m.properties.id, m]));
+  map.getSource('manchas').setData(fc(manchas));
+  map.getSource('pontos').setData(fc(manchas.map(m => ({ type: 'Feature', properties: m.properties,
+    geometry: { type: 'Point', coordinates: [m.properties.lon, m.properties.lat] } }))));
+  map.getSource('zonas').setData(fc(ps.flat()));
+  if (selecionada && !porId.has(selecionada)) fecharDetalhe();
+  aplicar();
+  carregarLotes();
+}
+
+function desenharSeletor() {
+  const sel = [...zonasSel];
+  $('#zonas-resumo').textContent = sel.length ? sel.join(', ') : 'nenhum';
+  $('#zonas-lista').innerHTML = meta.zonas.map(z => {
+    const i = zonaInfo.get(z.cod);
+    return `<label title="${esc(z.nome)}"><input type="checkbox" value="${esc(z.cod)}" ${zonasSel.has(z.cod) ? 'checked' : ''}>
+      <i class="am" style="background:${i.cor}33;border:1.5px solid ${i.cor}"></i>
+      <span class="zc">${esc(z.cod)}</span><span class="zn">${esc(z.nome)}</span><span class="zq">${fmt(z.manchas)}</span></label>`;
+  }).join('');
+}
 
 /* -------------------------------------------------------- filtros / cores */
 function aplicar() {
@@ -208,8 +271,7 @@ function aplicar() {
   for (const id of ['manchas-fill', 'manchas-line', 'pontos']) map.setFilter(id, f);
   map.setPaintProperty('manchas-fill', 'fill-color', exprCor());
   map.setPaintProperty('pontos', 'circle-color', exprCor());
-  map.setPaintProperty('manchas-line', 'line-color',
-    ['match', ['get', est.modo], 3, '#12662f', 2, '#8a6700', 1, '#9c1f24', '#555a63']);
+  map.setPaintProperty('manchas-line', 'line-color', exprContorno());
   desenharLegenda();
   atualizarLista();
   desenharLotes();
@@ -217,9 +279,11 @@ function aplicar() {
 }
 
 function desenharLegenda() {
-  const filtradas = manchas.filter(m => { const f = est.faixas; est.faixas = { 0: 1, 1: 1, 2: 1, 3: 1 }; const r = passa(m); est.faixas = f; return r; });
+  const guarda = est.faixas;
+  est.faixas = { 0: 1, 1: 1, 2: 1, 3: 1 };
   const cont = { 0: 0, 1: 0, 2: 0, 3: 0 };
-  for (const m of filtradas) cont[m.properties[est.modo]]++;
+  for (const m of manchas) if (passa(m)) cont[m.properties[est.modo]]++;
+  est.faixas = guarda;
   const rot = ROTULOS[est.modo];
   $('#legenda').innerHTML = [3, 2, 1, 0].filter(k => rot[k]).map(k => `
     <button type="button" data-faixa="${k}" class="${est.faixas[k] ? '' : 'off'}" aria-pressed="${!!est.faixas[k]}">
@@ -247,75 +311,91 @@ function atualizarLista() {
   }[est.ordem];
   const lista = visiveis().sort((a, b) => chave(a.properties) - chave(b.properties));
   const total = manchas.filter(passa).length;
-  $('#contagem').textContent = est.soTela && !est.busca
-    ? `${fmt(lista.length)} na tela · ${fmt(total)} no total` : `${fmt(total)} manchas`;
+  $('#contagem').textContent = !zonasSel.size ? 'Marque ao menos um zoneamento'
+    : est.soTela && !est.busca ? `${fmt(lista.length)} na tela · ${fmt(total)} no total` : `${fmt(total)} manchas`;
   const top = lista.slice(0, 150);
   $('#lista').innerHTML = top.length ? top.map(m => {
     const p = m.properties;
     return `<li data-id="${esc(p.id)}" class="${selecionada === p.id ? 'sel' : ''}">
       <span class="faixa" style="background:${CORES[p[est.modo]]}"></span>
       <span class="corpo"><span class="tit">${esc(titulo(p))}</span>
-        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.vila ? ' · vila' : ''}${p.env ? ' · ⚠ envoltória' : ''}</span></span>
+        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.vila ? ' · vila' : ''}${m._alerta ? ' · ⚠' : ''}</span></span>
       <span class="num"><b>${fmt(p.area)} m²</b><span>${est.modo === 'faixa' ? `equiv. ${fmt(p.area_eq)}` : `IPTU ${fmt(p.area_iptu)}`}</span></span>
     </li>`; }).join('') + (lista.length > top.length ? `<li class="vazio">+ ${fmt(lista.length - top.length)} manchas — aproxime o mapa ou refine os filtros.</li>` : '')
-    : '<li class="vazio">Nenhuma mancha com esses filtros nesta área. Afaste o mapa ou relaxe os filtros.</li>';
+    : '<li class="vazio">Nenhuma mancha com esses filtros nesta área. Afaste o mapa, relaxe os filtros ou marque outros zoneamentos.</li>';
 }
 
 /* ------------------------------------------------------------------ lotes */
-function celulasVisiveis() {
+function arquivosVisiveis() {
   const b = map.getBounds(), out = [];
   const x0 = Math.floor(b.getWest() / CEL) - 1, x1 = Math.floor(b.getEast() / CEL) + 1;
   const y0 = Math.floor(b.getSouth() / CEL) - 1, y1 = Math.floor(b.getNorth() / CEL) + 1;
-  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) if (celulas.has(`${x}_${y}`)) out.push(`${x}_${y}`);
+  for (const z of zonasSel) {
+    const cels = zonaInfo.get(z).celulas;
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) if (cels.has(`${x}_${y}`)) out.push(`${z}/${x}_${y}`);
+  }
   return out;
 }
-function buscarCelula(c) {
-  if (!cacheLotes.has(c)) cacheLotes.set(c, dados(`lotes/${c}.geojson.gz`).then(d => d.features).catch(() => { cacheLotes.delete(c); return []; }));
-  return cacheLotes.get(c);
+function buscarLotes(chave) {
+  if (!cacheLotes.has(chave)) {
+    const [z, cel] = chave.split('/');
+    cacheLotes.set(chave, dados(`lotes/${zonaInfo.get(z).arq}/${cel}.geojson.gz`).then(d => d.features)
+      .catch(() => { cacheLotes.delete(chave); return []; }));
+  }
+  return cacheLotes.get(chave);
 }
 let pedido = 0;
 async function carregarLotes() {
-  const perto = map.getZoom() >= ZOOM_LOTES - 0.5;
   $('#aviso').hidden = map.getZoom() >= 12.5;
   $('#aviso').textContent = 'Aproxime para ver o contorno das manchas e dos lotes';
-  if (!perto) return;
+  if (map.getZoom() < ZOOM_LOTES - 0.5) return;
   const meu = ++pedido;
-  const cels = celulasVisiveis();
-  if (cels.length > 30) return;
-  await Promise.all(cels.map(buscarCelula));
+  const arqs = arquivosVisiveis();
+  if (arqs.length > 80) return;
+  await Promise.all(arqs.map(buscarLotes));
   if (meu === pedido) desenharLotes();
 }
 async function desenharLotes() {
   if (!map.getSource('lotes') || map.getZoom() < ZOOM_LOTES - 0.5) return;
-  const cels = celulasVisiveis().filter(c => cacheLotes.has(c));
-  const partes = await Promise.all(cels.map(c => cacheLotes.get(c)));
+  const arqs = arquivosVisiveis().filter(c => cacheLotes.has(c));
+  const partes = await Promise.all(arqs.map(c => cacheLotes.get(c)));
   const feats = partes.flat().filter(l => { const m = porId.get(l.properties.m); return m && passa(m); });
-  map.getSource('lotes').setData({ type: 'FeatureCollection', features: feats });
+  map.getSource('lotes').setData(fc(feats));
 }
 
 /* -------------------------------------------------------------- interação */
+// Ao passar o mouse: só área total, área construída, nº de lotes, zoneamento e alertas.
+function dicaMancha(p) {
+  const al = alertasDe(p).map(k => `<div class="al">⚠ ${ALERTAS[k]} — ${plural(p['a_' + k], 'lote', 'lotes')}</div>`).join('');
+  return `<table class="dica-t">
+    <tr><td>Área total</td><td><b>${fmt(p.area)} m²</b></td></tr>
+    <tr><td>Área construída</td><td>${fmt(p.ac)} m²</td></tr>
+    <tr><td>Lotes</td><td>${p.n}</td></tr>
+    <tr><td>Zoneamento</td><td>${esc(p.zona)}</td></tr></table>${al}`;
+}
+
 function interacoes() {
-  const dica = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dica', offset: 12 });
+  const dica = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dica', offset: 12, maxWidth: '300px' });
   let hoverId = null;
   const soltar = () => {
     if (hoverId !== null) map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: false });
     hoverId = null;
   };
   map.on('mousemove', 'manchas-fill', e => {
-    const f = e.features[0], p = f.properties;
-    if (hoverId !== p.id) { soltar(); hoverId = p.id; map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: true }); }
-    map.getCanvas().style.cursor = 'pointer';
-    let html = `<b>${fmt(p.area)} m²</b> · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}<br>${esc(p.zonas)}${p.vila ? ' · inclui vila' : ''}`;
-    if (map.getZoom() >= ZOOM_LOTES) {
-      const l = map.queryRenderedFeatures(e.point, { layers: ['lotes-fill'] })[0];
-      if (l && l.properties.v) html = `<b>Passagem de vila</b> · ${fmt(l.properties.ag)} m²<br><span style="color:#5b6675">mancha: ${fmt(p.area)} m² · ${p.n} lotes · forma ${p.forma}</span>`;
-      else if (l) html = `<b>${esc(l.properties.end || 'Lote ' + l.properties.sql)}</b><br>terreno ${fmt(l.properties.at || l.properties.ag)} m² · construído ${fmt(l.properties.ac)} m²<br><span style="color:#5b6675">mancha: ${fmt(p.area)} m² · ${p.n} lotes · forma ${p.forma}</span>`;
+    const p = e.features[0].properties;
+    if (hoverId !== p.id) {
+      soltar(); hoverId = p.id;
+      map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: true });
+      dica.setHTML(dicaMancha(p));
     }
-    dica.setLngLat(e.lngLat).setHTML(html).addTo(map);
+    map.getCanvas().style.cursor = 'pointer';
+    dica.setLngLat(e.lngLat).addTo(map);
   });
   map.on('mouseleave', 'manchas-fill', () => { soltar(); dica.remove(); map.getCanvas().style.cursor = ''; });
-  for (const [camada, rot] of [['pontos', p => `<b>${fmt(p.area)} m²</b> · ${p.n} lotes · forma ${p.forma}<br>${esc(p.distrito)} · ${esc(p.zona)}`],
-    ['estacoes', p => `<b>${esc(p.nome)}</b>`], ['tombados-fill', p => `<b>Bem tombado</b><br>${esc(p.nome)}${p.sit && p.sit !== 'TOMBADO' ? ' (' + esc(p.sit) + ')' : ''}`]]) {
+  const rotRestr = p => `<b>Restrição</b><br>${esc(p.t)}`;
+  for (const [camada, rot] of [['pontos', dicaMancha], ['estacoes', p => `<b>${esc(p.nome)}</b>`],
+    ['tombados-fill', p => `<b>Bem tombado</b><br>${esc(p.nome)}${p.sit && p.sit !== 'TOMBADO' ? ' (' + esc(p.sit) + ')' : ''}`],
+    ['restricoes-fill', rotRestr], ['alertas-fill', p => `<b>Alerta</b><br>${esc(ALERTAS[p.t] || p.t)}`]]) {
     map.on('mousemove', camada, e => {
       if (camada !== 'pontos' && map.queryRenderedFeatures(e.point, { layers: ['manchas-fill'] }).length) return;
       map.getCanvas().style.cursor = camada === 'pontos' ? 'pointer' : '';
@@ -336,7 +416,7 @@ async function selecionar(id, voar = true, sqlDestaque = null) {
   if (!m) return;
   selecionada = id;
   map.getSource('selecao').setData(m);
-  map.getSource('lote-sel').setData(vazio());
+  map.getSource('lote-sel').setData(fc());
   if (voar) {
     const xs = m.geometry.coordinates[0].map(c => c[0]), ys = m.geometry.coordinates[0].map(c => c[1]);
     const estreito = matchMedia('(max-width: 760px)').matches;
@@ -346,7 +426,7 @@ async function selecionar(id, voar = true, sqlDestaque = null) {
   $$('#lista li').forEach(li => li.classList.toggle('sel', li.dataset.id === id));
   desenharDetalhe(m, null);
   gravarHash();
-  const lotes = (await buscarCelula(m.properties.cel)).filter(l => l.properties.m === id);
+  const lotes = (await buscarLotes(`${m.properties.zona}/${m.properties.cel}`)).filter(l => l.properties.m === id);
   if (selecionada === id) {
     desenharDetalhe(m, lotes);
     if (sqlDestaque) destacarLote(lotes, sqlDestaque);
@@ -355,7 +435,7 @@ async function selecionar(id, voar = true, sqlDestaque = null) {
 
 function destacarLote(lotes, sql) {
   const l = lotes.find(x => x.properties.sql === sql);
-  map.getSource('lote-sel').setData(l || vazio());
+  map.getSource('lote-sel').setData(l || fc());
   $$('table.lotes tr[data-sql]').forEach(tr => tr.style.background = tr.dataset.sql === sql ? '#e8f0fd' : '');
   const tr = $(`table.lotes tr[data-sql="${CSS.escape(sql)}"]`);
   if (tr) tr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -368,20 +448,23 @@ function desenharDetalhe(m, lotes) {
   const barra = (nome, v, txt) => `<div class="metrica"><span>${nome}</span><span class="trilho"><i style="width:${Math.max(2, Math.min(100, v))}%"></i></span><em>${txt ?? v}</em></div>`;
   const notaVert = Math.round(100 * Math.min(1, Math.max(0, 1 - (p.nv - par.vert_ideal) / (par.vert_ruim - par.vert_ideal))));
   const rotFaixa = { 3: 'Verde · equiv. ≥ 6.000 m²', 2: 'Amarelo · equiv. ≥ 4.000 m²', 1: 'Vermelho · equiv. ≥ 2.500 m²', 0: 'Forma compromete' }[fx];
+  const al = alertasDe(p);
+  const rotLote = q => (q.al || '').split(',').filter(Boolean)
+    .map(k => (k === 'cs' || k === 'cp') && q.cont ? q.cont : ALERTAS[k]).join(' · ');
   el.innerHTML = `
     <div class="topo"><button class="link" id="voltar" type="button">← Voltar à lista</button>
       <button class="link" id="copiar" type="button">Copiar link</button></div>
     <h3>${esc(titulo(p))}</h3>
     <p class="onde">${esc(p.distrito)} · setor-quadra ${esc(p.id.slice(0, 7))}${p.ruas.split(' · ').length > 2 ? ' · também ' + esc(p.ruas.split(' · ').slice(2).join(', ')) : ''}</p>
-    <div class="tags"><span class="tag t${fx}">${rotFaixa}</span>${p.zonas.split(' · ').map(z => `<span class="tag zona">${esc(z)}</span>`).join('')}${p.vila ? `<span class="tag vila">Vila ${p.vila}</span>` : ''}</div>
+    <div class="tags"><span class="tag t${fx}">${rotFaixa}</span><span class="tag zona" title="${esc(zonaInfo.get(p.zona)?.nome || '')}">${esc(p.zona)}</span>${p.vila ? `<span class="tag vila">Vila ${p.vila}</span>` : ''}</div>
     <div class="cartoes">
       <div class="cartao"><span>Área somada</span><b>${fmt(p.area)}</b> <small>m²</small></div>
       <div class="cartao"><span>Área equivalente</span><b>${fmt(p.area_eq)}</b> <small>m²</small></div>
       <div class="cartao"><span>Lotes</span><b>${p.n}</b></div>
     </div>
+    ${al.length ? `<div class="alerta"><b>⚠ Pontos de atenção</b><ul>${al.map(k => `<li>${ALERTAS[k]} — ${plural(p['a_' + k], 'lote', 'lotes')}</li>`).join('')}</ul>Os lotes atingidos estão marcados na tabela abaixo.</div>` : ''}
     ${p.vila === 'completa' ? `<div class="alerta info">Inclui uma <b>vila completa</b>: a passagem (em azul no mapa) e todas as casas que dão para ela estão na mancha. A área da passagem está somada.</div>` : ''}
-    ${p.vila === 'parcial' ? `<div class="alerta">Inclui <b>passagem de vila</b> (em azul no mapa), mas alguma casa que encosta nela ficou de fora da mancha — tombada, prédio ou fora de ZEU/ZC. Confira se a vila pode ser comprada inteira.</div>` : ''}
-    ${p.env ? `<div class="alerta">⚠ Parte da mancha está em <b>área envoltória de bem tombado</b> (${esc(p.env)}). Projetos aqui dependem de aprovação do órgão de patrimônio.</div>` : ''}
+    ${p.vila === 'parcial' ? `<div class="alerta info">Inclui <b>passagem de vila</b> (em azul no mapa), mas alguma casa que encosta nela ficou de fora da mancha — tombada, prédio, com restrição ou em outro zoneamento.</div>` : ''}
     <h2>Forma do terreno unificado · nota ${p.forma}/100</h2>
     <div class="metricas">
       ${barra('Retangularidade', p.ret)}
@@ -392,6 +475,7 @@ function desenharDetalhe(m, lotes) {
     <p class="nota" style="margin:8px 0 0">${fator >= 1 ? 'Forma boa: a área conta integralmente.' : `Fator de forma ${fator.toFixed(2).replace('.', ',')}: ${fmt(p.area)} m² × ${fator.toFixed(2).replace('.', ',')} = ${fmt(p.area_eq)} m² equivalentes.`}</p>
     <h2>Dados</h2>
     <dl class="fatos">
+      <dt>Zoneamento</dt><dd>${esc(p.zona)}${zonaInfo.get(p.zona)?.nome ? ' — ' + esc(zonaInfo.get(p.zona).nome) : ''}</dd>
       <dt>Área pelo IPTU</dt><dd>${fmt(p.area_iptu)} m²</dd>
       <dt>Construído hoje</dt><dd>${fmt(p.ac)} m² · CA médio ${String(p.ca).replace('.', ',')}</dd>
       <dt>Usos</dt><dd>${esc(p.usos)}</dd>
@@ -404,7 +488,7 @@ function desenharDetalhe(m, lotes) {
     </div>
     <h2>Lotes da mancha</h2>
     ${lotes ? `<table class="lotes"><thead><tr><th>Endereço / SQL</th><th class="n">Terreno</th><th class="n">Constr.</th><th>Uso</th></tr></thead><tbody>
-      ${lotes.map(l => { const q = l.properties; return `<tr data-sql="${esc(q.sql)}"><td>${esc(q.end || '—')}<div class="sqlc">${esc(q.sql)} · ${esc(q.zona)}</div></td>
+      ${lotes.map(l => { const q = l.properties; return `<tr data-sql="${esc(q.sql)}"><td>${esc(q.end || '—')}<div class="sqlc">${esc(q.sql)}</div>${q.al ? `<div class="lote-al">⚠ ${esc(rotLote(q))}</div>` : ''}</td>
         <td class="n">${fmt(q.at || q.ag)}</td><td class="n">${fmt(q.ac)}</td><td>${esc(q.uso.replace('Não residencial', 'Não resid.'))}</td></tr>`; }).join('')}
       </tbody></table>` : '<p class="nota">Carregando lotes…</p>'}`;
   el.hidden = false;
@@ -417,8 +501,8 @@ function desenharDetalhe(m, lotes) {
   };
   if (lotes) {
     $('#csv-lotes').onclick = () => baixarCSV(`lotes_${p.id}.csv`,
-      ['SQL', 'Endereço', 'Zona', 'Uso', 'Área terreno IPTU (m²)', 'Área do desenho (m²)', 'Área construída (m²)', 'Situação'],
-      lotes.map(l => { const q = l.properties; return [q.sql, q.end, q.zona, q.uso, q.at, q.ag, q.ac, q.sit]; }));
+      ['SQL', 'Endereço', 'Zona', 'Uso', 'Área terreno IPTU (m²)', 'Área do desenho (m²)', 'Área construída (m²)', 'Alertas'],
+      lotes.map(l => { const q = l.properties; return [q.sql, q.end, p.zona, q.uso, q.at, q.ag, q.ac, rotLote(q)]; }));
     $$('table.lotes tr[data-sql]').forEach(tr => tr.onclick = () => destacarLote(lotes, tr.dataset.sql));
   }
 }
@@ -426,8 +510,8 @@ function desenharDetalhe(m, lotes) {
 function fecharDetalhe() {
   selecionada = null;
   $('#detalhe').hidden = true;
-  map.getSource('selecao').setData(vazio());
-  map.getSource('lote-sel').setData(vazio());
+  map.getSource('selecao').setData(fc());
+  map.getSource('lote-sel').setData(fc());
   $$('#lista li.sel').forEach(li => li.classList.remove('sel'));
   gravarHash();
 }
@@ -447,7 +531,7 @@ function sincronizarControles() {
   $('#f-area').value = est.area; $('#f-forma').value = est.forma;
   $('#f-nmax').value = est.nmax; $('#f-est').value = est.est; $('#f-pnr').value = est.pnr;
   $('#o-pnr').textContent = est.pnr >= 100 ? 'sem limite' : `${est.pnr}%`;
-  $('#f-zeu').checked = est.zeu; $('#f-zc').checked = est.zc; $('#f-env').checked = est.env; $('#f-vila').checked = est.vila;
+  $('#f-vila').checked = est.vila; $('#f-sem-alerta').checked = est.semAlerta;
   $('#so-tela').checked = est.soTela; $('#ordem').value = est.ordem;
   $('#o-area').textContent = fmt(est.area); $('#o-forma').textContent = est.forma;
   $('#o-nmax').textContent = est.nmax >= NMAX_SEM_LIMITE ? 'sem limite' : est.nmax;
@@ -455,6 +539,7 @@ function sincronizarControles() {
   $$('#modo-cor button').forEach(b => b.classList.toggle('ativa', b.dataset.modo === est.modo));
 }
 
+const camadaTardia = {};   // camadas pesadas só são baixadas quando ligadas
 function ligarInterface() {
   sincronizarControles();
   const liga = (sel, chave, conv = Number) => $(sel).addEventListener('input', e => {
@@ -462,13 +547,18 @@ function ligarInterface() {
     sincronizarControles(); aplicar();
   });
   liga('#f-area', 'area'); liga('#f-forma', 'forma'); liga('#f-nmax', 'nmax'); liga('#f-est', 'est'); liga('#f-pnr', 'pnr');
-  liga('#f-zeu', 'zeu'); liga('#f-zc', 'zc'); liga('#f-env', 'env'); liga('#f-vila', 'vila'); liga('#so-tela', 'soTela');
+  liga('#f-vila', 'vila'); liga('#f-sem-alerta', 'semAlerta'); liga('#so-tela', 'soTela');
   liga('#ordem', 'ordem', String);
   let t;
   $('#busca').addEventListener('input', e => {
     clearTimeout(t);
     t = setTimeout(() => { est.busca = semAcento(e.target.value.trim()); aplicar(); }, 180);
   });
+  $('#zonas-lista').addEventListener('change', e => {
+    if (e.target.checked) zonasSel.add(e.target.value); else zonasSel.delete(e.target.value);
+    trocarZonas();
+  });
+  $('#zonas-padrao').onclick = () => { zonasSel = new Set(meta.zonas_padrao.filter(z => zonaInfo.has(z))); trocarZonas(); };
   $('#modo-cor').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     est.modo = b.dataset.modo;
@@ -489,10 +579,15 @@ function ligarInterface() {
     map.setPaintProperty('manchas-fill', 'fill-opacity',
       ['case', ['boolean', ['feature-state', 'hover'], false], sat ? 0.7 : 0.8, sat ? 0.42 : 0.58]);
   });
-  $$('[data-camada]').forEach(c => c.addEventListener('change', () => {
+  $$('[data-camada]').forEach(c => c.addEventListener('change', async () => {
+    const nome = c.dataset.camada;
+    if (c.checked && (nome === 'restricoes' || nome === 'alertas') && !camadaTardia[nome]) {
+      camadaTardia[nome] = dados(`${nome}.geojson.gz`).then(d => map.getSource(nome).setData(d)).catch(console.error);
+      await camadaTardia[nome];
+    }
     const v = c.checked ? 'visible' : 'none';
     const ids = { zonas: ['zonas-fill', 'zonas-line'], tombados: ['tombados-fill', 'tombados-line'],
-      envoltorias: ['envoltorias-fill', 'envoltorias-line'], estacoes: ['estacoes'] }[c.dataset.camada];
+      restricoes: ['restricoes-fill', 'restricoes-line'], alertas: ['alertas-fill', 'alertas-line'], estacoes: ['estacoes'] }[nome];
     ids.forEach(id => map.setLayoutProperty(id, 'visibility', v));
   }));
   $('#btn-limpar').onclick = () => { est = structuredClone(PADRAO); $('#busca').value = ''; sincronizarControles(); aplicar(); };
@@ -508,13 +603,15 @@ function ligarInterface() {
   $('#btn-csv').onclick = () => {
     const l = manchas.filter(passa);
     baixarCSV('manchas.csv',
-      ['ID (setor-quadra-lote)', 'Distrito', 'Ruas', 'Zonas', 'Área somada (m²)', 'Área IPTU (m²)', 'Área equivalente (m²)',
+      ['ID (setor-quadra-lote)', 'Zoneamento', 'Distrito', 'Ruas', 'Área somada (m²)', 'Área IPTU (m²)', 'Área equivalente (m²)',
         'Faixa', 'Lotes', 'Nota de forma', 'Retangularidade', 'Miolo aproveitável', 'Perímetro×área', 'Vértices',
-        'Área construída (m²)', 'CA médio', 'Usos', 'Vila', 'Envoltória', 'Estação mais próxima', 'Distância (m)', 'Latitude', 'Longitude', 'Link'],
-      l.map(m => { const p = m.properties; return [p.id, p.distrito, p.ruas, p.zonas, p.area, p.area_iptu, p.area_eq,
+        'Área construída (m²)', 'CA médio', 'Usos', 'Vila', 'Alertas', 'Estação mais próxima', 'Distância (m)', 'Latitude', 'Longitude', 'Link'],
+      l.map(m => { const p = m.properties; return [p.id, p.zona, p.distrito, p.ruas, p.area, p.area_iptu, p.area_eq,
         ['forma compromete', 'vermelho', 'amarelo', 'verde'][p.faixa], p.n, p.forma, p.ret, p.miolo, p.comp, p.nv, p.ac,
-        String(p.ca).replace('.', ','), p.usos, p.vila, p.env, p.est, p.est_m, String(p.lat).replace('.', ','), String(p.lon).replace('.', ','),
-        `${location.origin}${location.pathname}#m=${p.id}`]; }));
+        String(p.ca).replace('.', ','), p.usos, p.vila,
+        alertasDe(p).map(k => `${ALERTAS[k]} (${p['a_' + k]})`).join(' | '),
+        p.est, p.est_m, String(p.lat).replace('.', ','), String(p.lon).replace('.', ','),
+        `${location.origin}${location.pathname}#m=${p.zona}~${p.id}`]; }));
   };
   $('#btn-criterios').onclick = () => $('#criterios').showModal();
   $('#criterios').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
@@ -528,17 +625,14 @@ function preencherCriterios() {
     'p-ret': pct(p.pesos.ret), 'p-miolo': pct(p.pesos.miolo), 'p-comp': pct(p.pesos.comp), 'p-vert': pct(p.pesos.vert),
     largura: p.raio_miolo * 2, vi: p.vert_ideal, vr: p.vert_ruim, fsp: pct(p.forma_sem_penalidade) };
   $$('[data-p]').forEach(s => s.textContent = v[s.dataset.p]);
-  $('#meta-rodape').textContent = `${fmt(meta.lotes_analisados)} lotes analisados · ${fmt(meta.lotes_elegiveis)} elegíveis · ${fmt(meta.manchas)} manchas. Fonte: ${meta.fonte}.`;
+  $('#meta-rodape').textContent = `${fmt(meta.lotes_analisados)} lotes analisados · ${fmt(meta.lotes_elegiveis)} elegíveis · ${fmt(meta.manchas)} manchas em ${meta.zonas.length} zoneamentos. Fonte: ${meta.fonte}.`;
 }
 
 /* ------------------------------------------------------------------- hash */
-function lerHash() {
-  const h = new URLSearchParams(location.hash.slice(1));
-  if (h.get('m')) est._abrir = h.get('m');
-}
 function gravarHash() {
   const h = new URLSearchParams(location.hash.slice(1));
-  if (selecionada) h.set('m', selecionada); else h.delete('m');
+  const m = selecionada && porId.get(selecionada);
+  if (m) h.set('m', `${m.properties.zona}~${selecionada}`); else h.delete('m');
   const s = '#' + [...h].map(([k, v]) => `${k}=${v}`).join('&');
   if (s !== location.hash) history.replaceState(null, '', s);
 }
