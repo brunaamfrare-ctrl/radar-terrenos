@@ -14,6 +14,7 @@ O site é estático e fica na pasta `docs/` (publicado pelo GitHub Pages).
 | Lote elegível | Lote fiscal do GeoSampa, fora de condomínio ("CD"), com área construída ÷ área do terreno ≤ 4 |
 | Exclusões | Tombado · em área envoltória (CONPRESP/CONDEPHAAT/IPHAN) · atingido por área cedida, cadastro de área pública (CAP), diretriz (DZ), desmembramento de gleba (DG) ou conjunto (CJ) · hospital, escola estadual, polícia civil/militar e guarda civil (cadastros de equipamentos do GeoSampa) · provável lançamento (terreno sem construção, sem número, com 1.000 m² ou mais) |
 | Mancha | Lotes elegíveis do mesmo zoneamento (Lei 18.177/24) com divisa comum ≥ 3 m, somando ≥ 2.500 m² |
+| Prédios | Lote em condomínio ("CD") entra na mancha quando a área construída estimada ÷ terreno é ≤ a régua "CA máximo dos prédios" do mapa (0 a 4, de 0,5 em 0,5; padrão 4). A área é estimada pela volumetria da camada "Edificações": projeção de cada volume × pavimentos (altura ÷ 2,9 m). Não conta subsolos e o levantamento é de 2014 |
 | Vilas | A passagem de vila (lote "V" — via de acesso) entra como elo: une as casas dos dois lados e soma área, sem contar como lote a negociar. A vila é "completa" quando toda casa que encosta na passagem está na mancha |
 | Alertas (não excluem) | Lote atingido por melhoramento viário, desapropriação (DUP/DIS), unidade geotécnica I da carta de 2024, área contaminada ou com potencial de contaminação, ou parcelamento aprovado como Passagem – PS |
 | Nota de forma (0–100) | 30% retangularidade · 30% miolo aproveitável (largura ≥ 20 m) · 20% perímetro × área · 20% nº de vértices (ideal ≤ 7) |
@@ -33,6 +34,7 @@ Todos os parâmetros estão no topo de `scripts/processar.py`.
 ```bash
 pip install -r requirements.txt
 python3 scripts/baixar_dados.py   # ~40 min: baixa todos os lotes, zoneamento e restrições do GeoSampa
+python3 scripts/estimar_predios.py  # ~20 min: estima a área construída dos condomínios pela volumetria
 python3 scripts/processar.py      # ~15 min: gera docs/dados/
 ```
 

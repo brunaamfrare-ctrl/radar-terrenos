@@ -244,3 +244,5 @@ dialog .fechar { position: absolute; top: 10px; right: 12px; background: none; b
 .dica .al + .al { margin-top: 2px; padding-top: 0; border-top: 0; }
 .alerta ul { margin: 4px 0 4px; padding-left: 18px; }
 .lote-al { color: #8a4b00; font-size: 11px; margin-top: 1px; }
+.dica-t .sec { color: var(--tinta-2); }
+dl.fatos small { color: var(--tinta-2); }

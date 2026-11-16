@@ -17,6 +17,11 @@ Regras (premissas de novos negócios):
   4. Nota de forma (0-100) combina retangularidade, compacidade
      (perímetro x área), nº de vértices e miolo aproveitável.
   5. Área equivalente = área x fator de forma -> faixa de cor.
+  7. Prédios (lotes em condomínio, "CD"): a área construída é estimada pela
+     volumetria (scripts/estimar_predios.py). O prédio entra nas manchas quando
+     área estimada / terreno <= valor da régua do mapa (0 a CA_MAX_PREDIO, de
+     PASSO_CA em PASSO_CA). As manchas são calculadas para cada posição da régua;
+     cada uma guarda a faixa da régua em que existe (propriedades "na" e "nb").
   6. Alertas (não excluem): melhoramento viário, desapropriação (DUP/DIS),
      unidade geotécnica I, área contaminada ou com potencial de contaminação,
      Passagem - PS (parcelamento aprovado como passagem; cobre vilas inteiras).
@@ -60,6 +65,8 @@ PESOS = dict(ret=0.30, comp=0.20, vert=0.20, miolo=0.30)
 FORMA_SEM_PENALIDADE = 0.80   # nota de forma a partir da qual não há desconto
 CELULA_LOTES = 0.01      # graus — tamanho do recorte dos arquivos de lotes
 
+CA_MAX_PREDIO = 4.0      # prédio (condomínio) com área estimada / terreno acima disso nunca entra
+PASSO_CA = 0.5           # passo da régua "CA máximo dos prédios" no mapa (0 = sem prédios)
 LANCAMENTO_AREA_MIN = 1000.0   # m² — terreno vago, sem número, a partir disso = provável lançamento
 EQUIP_DIST_MAX = 15.0          # m — ponto de equipamento fora de lote casa com o lote mais próximo até aqui
 SEM_NUMERO = {"", "S/N", "SN", "S/Nº"}
@@ -146,7 +153,7 @@ def nota_forma(u):
     a = u.area
     s = u.simplify(0.5)
     ret = a / max(shapely.minimum_rotated_rectangle(u).area, 1e-9)
-    comp = min(1.0, 4.0 * math.sqrt(a) / s.length)      # 1 = quadrado
+    comp = min(1.0, 4.0 * math.sqrt(a) / max(s.length, 1e-6))      # 1 = quadrado
     sv = u.simplify(TOL_VERTICES)
     nv = len(sv.exterior.coords) - 1 + sum(len(i.coords) - 1 for i in sv.interiors)
     vert = min(1.0, max(0.0, 1.0 - (nv - VERT_IDEAL) / (VERT_RUIM - VERT_IDEAL)))
@@ -237,13 +244,28 @@ def main():
     ok = np.zeros(n_total, bool)
     motivo = collections.Counter()
     via = np.array([p["cd_tipo_lote"] == "V" for p in props])   # passagem de vila
+    with open(os.path.join(BRUTOS, "predios.json")) as fh:
+        vol = json.load(fh)
+    predio = np.zeros(n_total, bool)          # lote em condomínio com volume estimado
+    nivel = np.zeros(n_total, np.int32)       # posição da régua em que o lote entra (0 = sempre)
+    ac_est = np.zeros(n_total)                # área construída estimada dos prédios
+    pav_est = np.zeros(n_total, np.int32)
+    alt_est = np.zeros(n_total)
     for i, p in enumerate(props):
         if via[i]:
             ok[i] = area_geo[i] >= 20
         elif p["cd_tipo_lote"] != "F":
             motivo["não fiscal (municipal)"] += 1
         elif p["cd_condominio"] != "00" or p["dc_tipo_uso_imovel"] == "Condomínio":
-            motivo["condomínio (CD)"] += 1
+            e = vol["predios"].get(str(p["cd_identificador"]))
+            if not e or e["ac"] <= 0 or area_geo[i] < 20:
+                motivo["condomínio sem volume no levantamento"] += 1
+            elif e["ac"] / area_geo[i] > CA_MAX_PREDIO:
+                motivo["prédio (CA estimado > %g)" % CA_MAX_PREDIO] += 1
+            else:
+                ok[i] = predio[i] = True
+                ac_est[i], pav_est[i], alt_est[i] = e["ac"], e["pav"], e["h"]
+                nivel[i] = max(1, math.ceil(e["ac"] / area_geo[i] / PASSO_CA - 1e-9))
         elif area_geo[i] < 20:
             motivo["geometria ínfima"] += 1
         else:
@@ -387,6 +409,14 @@ def main():
     divisa = shapely.area(shapely.intersection(buf[a], buf[b])) / (2 * FOLGA)
     m = divisa >= DIVISA_MIN
     a, b = a[m], b[m]
+    # Manchas em cada posição da régua de prédios. Os componentes só crescem
+    # conforme a régua sobe, então basta ir acrescentando as divisas (union-find
+    # incremental) e registrar, para cada mancha distinta, a faixa em que existe.
+    niv = nivel[idx]
+    via_l = via[idx]
+    area_l = area_geo[idx]
+    nivel_divisa = np.maximum(niv[a], niv[b])
+    n_niveis = int(round(CA_MAX_PREDIO / PASSO_CA))
     pai = np.arange(len(idx))
 
     def raiz(x):
@@ -394,26 +424,38 @@ def main():
             pai[x] = pai[pai[x]]
             x = pai[x]
         return x
-    for x, y in zip(a, b):
-        rx, ry = raiz(x), raiz(y)
-        if rx != ry:
-            pai[ry] = rx
-    grupos = collections.defaultdict(list)
-    for k in range(len(idx)):
-        grupos[raiz(k)].append(k)
-    grupos = [v for v in grupos.values()
-              if area_geo[idx[v]].sum() >= AREA_MIN and not via[idx[v]].all()]
-    log(f"  {len(grupos)} manchas com >= {AREA_MIN:.0f} m²")
+    unicas = {}                                   # membros -> [nível inicial, nível final, membros]
+    for L in range(n_niveis + 1):
+        m = nivel_divisa == L
+        for x, y in zip(a[m], b[m]):
+            rx, ry = raiz(x), raiz(y)
+            if rx != ry:
+                pai[ry] = rx
+        ativos = np.flatnonzero(niv <= L)
+        r = np.fromiter((raiz(k) for k in ativos), dtype=np.int64, count=len(ativos))
+        soma = np.bincount(r, weights=area_l[ativos], minlength=len(idx))
+        bons = soma[r] >= AREA_MIN
+        ordem = np.argsort(r[bons], kind="stable")
+        rk, ak = r[bons][ordem], ativos[bons][ordem]
+        n_L = 0
+        for v in np.split(ak, np.flatnonzero(np.diff(rk)) + 1) if len(ak) else []:
+            if via_l[v].all():
+                continue
+            n_L += 1
+            chave = v.tobytes()
+            if chave in unicas:
+                unicas[chave][1] = L
+            else:
+                unicas[chave] = [L, L, v]
+        log(f"  régua {L * PASSO_CA:.1f}: {n_L} manchas")
+    grupos = list(unicas.values())
+    log(f"  {len(grupos)} manchas distintas com >= {AREA_MIN:.0f} m²")
 
     # ------------------------------------------------- vilas (passagens "V")
     # Vila "completa": toda casa que encosta na passagem está na mesma mancha
     # (se sobra alguma de fora — tombada, prédio, outra zona — a vila é "parcial").
-    grupo_de = {}
-    for n_g, membros in enumerate(grupos):
-        for k in membros:
-            grupo_de[idx[k]] = n_g
-    vias_ok = np.array([i for i in np.flatnonzero(via) if i in grupo_de], dtype=int)
-    via_completa = {}
+    vias_ok = np.flatnonzero(via & ok)
+    vizinhas_via = collections.defaultdict(list)
     if len(vias_ok):
         bv = shapely.buffer(geoms[vias_ok], FOLGA, join_style="mitre")
         va, vb = STRtree(geoms).query(bv, predicate="intersects")
@@ -421,14 +463,11 @@ def main():
             bv[va], shapely.buffer(geoms[vb], FOLGA, join_style="mitre"))) / (2 * FOLGA)
         for x, y, t in zip(va, vb, toque):
             i = vias_ok[x]
-            via_completa.setdefault(i, True)
             # condomínios encostados na passagem têm frente própria para a rua: não contam
             if y == i or t < 1.5 or props[y]["cd_tipo_lote"] != "F" \
                     or props[y]["cd_condominio"] != "00":
                 continue
-            if grupo_de.get(y) != grupo_de[i]:
-                via_completa[i] = False
-    log(f"  {len(vias_ok)} passagens de vila dentro de manchas")
+            vizinhas_via[i].append(int(y))
 
     # ------------------------------------------------------ apoio espacial
     dg, dp = carregar("distrito_municipal.json")
@@ -445,30 +484,44 @@ def main():
     # ------------------------------------------------------------ manchas
     log("Montando manchas…")
     manchas = collections.defaultdict(list)                 # zona -> feições
-    lotes_idx = collections.defaultdict(list)               # (zona, célula) -> [(k, id)]
-    for membros in grupos:
-        u = shapely.union_all(buf[membros]).buffer(-FOLGA, join_style="mitre")
-        u = maior_poligono(u)
-        if u is None:
-            continue
-        u = shapely.Polygon(u.exterior, [h for h in u.interiors if shapely.Polygon(h).area >= 20])
-        if not u.is_valid:
-            u = maior_poligono(shapely.make_valid(u)) or u
+    lotes_idx = collections.defaultdict(dict)               # (zona, célula) -> {lote: [ids das manchas]}
+    degeneradas = 0
+    for nivel_a, nivel_b, membros in grupos:
         area = float(area_geo[idx[membros]].sum())
-        nota, det = nota_forma(u)
+        try:
+            u = shapely.union_all(buf[membros]).buffer(-FOLGA, join_style="mitre")
+            u = maior_poligono(u)
+            if u is not None and not u.is_empty:
+                u = shapely.Polygon(u.exterior, [h for h in u.interiors if shapely.Polygon(h).area >= 20])
+                if not u.is_valid:
+                    u = maior_poligono(shapely.make_valid(u)) or u
+            # desenho que não fecha (lotes sobrepostos ou inválidos na origem): descarta
+            if u is None or u.is_empty or u.area < 0.5 * area:
+                degeneradas += 1
+                continue
+            nota, det = nota_forma(u)
+        except shapely.errors.GEOSException:
+            degeneradas += 1
+            continue
         fator = min(1.0, nota / FORMA_SEM_PENALIDADE)
         area_eq = area * fator
 
-        ms = sorted(membros, key=lambda k: (via[idx[k]],
-                                            props[idx[k]]["cd_setor_fiscal"],
-                                            props[idx[k]]["cd_quadra_fiscal"],
-                                            props[idx[k]]["cd_lote"]))
-        p0 = props[idx[ms[0]]]          # primeiro lote fiscal (as vias ficam no fim)
-        mid = f"{p0['cd_setor_fiscal']}-{p0['cd_quadra_fiscal']}-{p0['cd_lote']}"
+        ms = sorted(membros.tolist(), key=lambda k: (via[idx[k]], predio[idx[k]],
+                                                     props[idx[k]]["cd_setor_fiscal"],
+                                                     props[idx[k]]["cd_quadra_fiscal"],
+                                                     props[idx[k]]["cd_lote"],
+                                                     props[idx[k]]["cd_condominio"]))
+        p0 = props[idx[ms[0]]]          # primeiro lote comum (prédios e vias ficam no fim)
+        mid = f"{p0['cd_setor_fiscal']}-{p0['cd_quadra_fiscal']}-" + \
+            (f"CD{p0['cd_condominio']}" if predio[idx[ms[0]]] else p0["cd_lote"])
+        if nivel_a > 0:                  # mancha que só existe a partir de certo ponto da régua
+            mid += f".{nivel_a}"
         z = zl[ms[0]]
         vias_m = [idx[k] for k in ms if via[idx[k]]]
+        n_predios = sum(1 for k in ms if predio[idx[k]])
+        dentro = set(idx[ms].tolist())
         vila = "" if not vias_m else \
-            "completa" if all(via_completa.get(i, True) for i in vias_m) else "parcial"
+            "completa" if all(y in dentro for i in vias_m for y in vizinhas_via.get(i, ())) else "parcial"
         usos = collections.Counter()
         ruas = collections.Counter()
         avisos = collections.Counter()
@@ -481,6 +534,13 @@ def main():
             if via[i]:
                 usos["Passagem de vila"] += 1
                 at_iptu += area_geo[i]
+                continue
+            if predio[i]:
+                usos["Prédio"] += 1
+                at_iptu += p["qt_area_terreno"] or area_geo[i]
+                ac_tot += ac_est[i]
+                if p["nm_logradouro_completo"]:
+                    ruas[p["nm_logradouro_completo"].strip()] += 1
                 continue
             usos[p["dc_tipo_uso_imovel"] or "Sem informação"] += 1
             if p["dc_tipo_uso_imovel"] == "Não residencial":
@@ -498,7 +558,8 @@ def main():
         cel = f"{math.floor(lon / CELULA_LOTES)}_{math.floor(lat / CELULA_LOTES)}"
         pr = {
             "id": mid, "zona": z, "area": round(area), "area_iptu": round(at_iptu),
-            "n": len(ms) - len(vias_m), "vila": vila, "forma": round(nota * 100),
+            "n": len(ms) - len(vias_m), "np": n_predios, "vila": vila,
+            "na": nivel_a * PASSO_CA, "nb": nivel_b * PASSO_CA, "forma": round(nota * 100),
             "ret": round(det["ret"] * 100), "comp": round(det["comp"] * 100),
             "nv": det["nv"], "miolo": round(det["miolo"] * 100),
             "area_eq": round(area_eq), "faixa": faixa(area_eq), "faixa_area": faixa(area),
@@ -511,7 +572,11 @@ def main():
         for cod, v in avisos.items():
             pr["a_" + cod] = v                   # nº de lotes com cada alerta
         manchas[z].append({"type": "Feature", "geometry": wgs(u.simplify(0.4)), "properties": pr})
-        lotes_idx[(z, cel)].extend((k, mid) for k in ms)
+        for k in ms:
+            lotes_idx[(z, cel)].setdefault(k, []).append(mid)
+
+    if degeneradas:
+        log(f"  {degeneradas} manchas descartadas por geometria degenerada")
 
     # ------------------------------------------------------------- gravação
     def gravar(nome, obj):
@@ -536,27 +601,33 @@ def main():
         gravar(f"manchas/{nome_arquivo(z)}.geojson.gz", {"type": "FeatureCollection", "features": feats})
 
     # lotes: converte tudo de uma vez (vetorizado) e escreve o GeoJSON como texto
-    todos = [k for lst in lotes_idx.values() for k, _ in lst]
+    todos = sorted({k for lst in lotes_idx.values() for k in lst})
     gl = shapely.transform(g[todos], lambda xy: np.column_stack(para_wgs.transform(xy[:, 0], xy[:, 1])))
     gl = shapely.set_precision(gl, 1e-6, mode="pointwise")
     gj = dict(zip(todos, shapely.to_geojson(gl)))
     n_lotes = 0
     for (z, cel), lst in lotes_idx.items():
         partes = []
-        for k, mid in lst:
+        for k, mids in lst.items():
             i = idx[k]
             p = props[i]
             num = (p["cd_numero_porta"] or "").strip()
-            pr = {"m": mid,
+            # "m" lista as manchas do lote: ele muda de mancha conforme a régua de prédios
+            pr = {"m": ",".join(mids),
                   "sql": (f"{p['cd_setor_fiscal']}.{p['cd_quadra_fiscal']}.V{p['cd_lote']}" if via[i] else
+                          f"{p['cd_setor_fiscal']}.{p['cd_quadra_fiscal']}.CD{p['cd_condominio']}" if predio[i] else
                           f"{p['cd_setor_fiscal']}.{p['cd_quadra_fiscal']}.{p['cd_lote']}-{p['cd_digito_sql'] or ''}"),
                   "end": "Passagem de vila" if via[i] else
                          ((p["nm_logradouro_completo"] or "").strip() + (", " + num if num else "")).strip(", "),
                   "at": p["qt_area_terreno"] or 0, "ag": round(float(area_geo[i])),
-                  "ac": p["qt_area_construida"] or 0,
-                  "uso": "Via de acesso" if via[i] else (p["dc_tipo_uso_imovel"] or "")}
+                  "ac": round(float(ac_est[i])) if predio[i] else (p["qt_area_construida"] or 0),
+                  "uso": "Via de acesso" if via[i] else "Prédio" if predio[i] else (p["dc_tipo_uso_imovel"] or "")}
             if via[i]:
                 pr["v"] = 1
+            if predio[i]:                       # área construída é estimativa pela volumetria
+                pr["p"] = 1
+                pr["pav"] = int(pav_est[i])
+                pr["h"] = float(alt_est[i])
             if i in alerta:
                 pr["al"] = ",".join(alerta[i])
                 if i in detalhe_cont:
@@ -599,7 +670,8 @@ def main():
     for cod in sorted(manchas, key=lambda c: (c not in ZONAS_PADRAO, c)):
         fx = collections.Counter(f["properties"]["faixa"] for f in manchas[cod])
         zonas_meta.append({"cod": cod, "arq": nome_arquivo(cod), "nome": znome.get(cod, ""),
-                           "manchas": len(manchas[cod]),
+                           "manchas": sum(1 for f in manchas[cod]
+                                          if f["properties"]["nb"] >= CA_MAX_PREDIO),
                            "celulas": sorted({c for (z, c) in lotes_idx if z == cod})})
     total = sum(len(v) for v in manchas.values())
     gravar("meta.json", {
@@ -609,6 +681,8 @@ def main():
                  "áreas contaminadas)",
         "lotes_analisados": int(n_total), "lotes_elegiveis": int(ok.sum()),
         "manchas": total, "zonas": zonas_meta, "zonas_padrao": ZONAS_PADRAO,
+        "regua_predios": dict(maximo=CA_MAX_PREDIO, passo=PASSO_CA, padrao=CA_MAX_PREDIO,
+                              altura_pavimento=vol["altura_pavimento"]),
         "descartes": dict(motivo),
         "parametros": dict(ca_max_casa=CA_MAX_CASA, area_min=AREA_MIN, faixas=FAIXAS,
                            divisa_min=DIVISA_MIN, raio_miolo=RAIO_MIOLO, pesos=PESOS,

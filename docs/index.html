@@ -83,6 +83,11 @@
         <input type="range" id="f-pnr" min="0" max="100" step="10" value="50">
         <small class="ajuda">Galpões, comércios, escolas etc. Em 50% ficam as manchas formadas principalmente por casas e terrenos.</small>
       </label>
+      <label class="campo">CA máximo dos prédios que entram na mancha
+        <span class="valor"><output id="o-predio"></output></span>
+        <input type="range" id="f-predio" min="0" max="4" step="0.5" value="4">
+        <small class="ajuda">Prédio = lote em condomínio (“CD”). O CA é a área construída estimada pela volumetria ÷ terreno. Em zero, só casas.</small>
+      </label>
       <div class="checks">
         <label><input type="checkbox" id="f-vila"> Somente manchas que incluem vila</label>
         <label><input type="checkbox" id="f-sem-alerta"> Ocultar manchas com algum alerta</label>
@@ -123,6 +128,10 @@
       <b>do mesmo zoneamento</b> (Lei 18.177/24) são somados. A mancha aparece quando a soma chega a
       <b><span data-p="amin"></span> m²</b>. Na caixa “Zoneamentos” você escolhe quais ver.
       <b>Vilas:</b> a passagem de vila (lote “V”) entra como elo — une as casas dos dois lados e soma área, sem contar como lote a negociar.</li>
+    <li><b>Prédios.</b> Lotes em condomínio (“CD”) entram na mancha quando a <b>área construída estimada ÷ terreno</b> é menor ou
+      igual à régua “CA máximo dos prédios” (aba Filtros). Como o cadastro público não traz a área construída dos condomínios,
+      ela é estimada pela volumetria: projeção de cada volume × pavimentos (altura ÷ <span data-p="hpav"></span> m).
+      Subsolos não contam, e o levantamento de alturas é de 2014 — prédios mais novos podem estar errados ou ausentes.</li>
     <li><b>Nota de forma (0–100).</b> Média ponderada de quatro medidas do terreno unificado:
       <ul>
         <li><b>Retangularidade</b> (<span data-p="p-ret"></span>%) — quanto do menor retângulo envolvente o terreno preenche.</li>

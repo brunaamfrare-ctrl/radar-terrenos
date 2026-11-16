@@ -24,7 +24,7 @@ const ALERTAS = {
 };
 const COR_ZONA = { ZEU: '#7c4dcc', ZC: '#1d84c9', 'ZEIS-5': '#0f9b8e', ZEM: '#d6409f' };
 const PALETA = ['#b45309', '#4d7c0f', '#be123c', '#0369a1', '#7e22ce', '#a16207', '#15803d', '#9f1239', '#475569', '#c2410c'];
-const PADRAO = { modo: 'faixa', area: 2500, forma: 0, nmax: 61, est: 2100, pnr: 50,
+const PADRAO = { modo: 'faixa', area: 2500, forma: 0, nmax: 61, est: 2100, pnr: 50, predio: 4,
   vila: false, semAlerta: false, ordem: 'area', faixas: { 0: true, 1: true, 2: true, 3: true }, busca: '', soTela: true };
 const ZOOM_LOTES = 15;
 const NMAX_SEM_LIMITE = 61, EST_SEM_LIMITE = 2100;
@@ -104,6 +104,7 @@ function passa(m) {
   if (est.nmax < NMAX_SEM_LIMITE && p.n > est.nmax) return false;
   if (est.est < EST_SEM_LIMITE && p.est_m > est.est) return false;
   if (est.pnr < 100 && p.pnr > est.pnr) return false;
+  if (p.na > est.predio || p.nb < est.predio) return false;   // régua de prédios
   if (est.vila && !p.vila) return false;
   if (est.semAlerta && m._alerta) return false;
   return passaBusca(m);
@@ -113,6 +114,7 @@ function exprFiltro() {
     ['>=', ['get', 'area'], est.area],
     ['>=', ['get', 'forma'], est.forma],
     ['in', ['get', est.modo], ['literal', Object.keys(est.faixas).filter(k => est.faixas[k]).map(Number)]],
+    ['<=', ['get', 'na'], est.predio], ['>=', ['get', 'nb'], est.predio],
   ];
   if (est.nmax < NMAX_SEM_LIMITE) f.push(['<=', ['get', 'n'], est.nmax]);
   if (est.est < EST_SEM_LIMITE) f.push(['<=', ['get', 'est_m'], est.est]);
@@ -134,6 +136,9 @@ map.on('load', async () => {
     return;
   }
   CEL = meta.parametros.celula_lotes;
+  const rg = meta.regua_predios;
+  PADRAO.predio = est.predio = rg.padrao;
+  Object.assign($('#f-predio'), { max: rg.maximo, step: rg.passo, value: rg.padrao });
   let n = 0;
   for (const z of meta.zonas) {
     zonaInfo.set(z.cod, { ...z, celulas: new Set(z.celulas), cor: COR_ZONA[z.cod] || PALETA[n++ % PALETA.length] });
@@ -160,6 +165,8 @@ map.on('load', async () => {
       'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.8, 0.58] } });
   map.addLayer({ id: 'vias-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES, filter: ['==', ['get', 'v'], 1],
     paint: { 'fill-color': '#3b4fd6', 'fill-opacity': 0.5 } });
+  map.addLayer({ id: 'predios-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES, filter: ['==', ['get', 'p'], 1],
+    paint: { 'fill-color': '#1c2430', 'fill-opacity': 0.38 } });
   map.addLayer({ id: 'lotes-line', type: 'line', source: 'lotes', minzoom: ZOOM_LOTES,
     paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 0.5, 18, 1.4], 'line-opacity': 0.9 } });
   map.addLayer({ id: 'lotes-fill', type: 'fill', source: 'lotes', minzoom: ZOOM_LOTES,
@@ -267,6 +274,9 @@ function desenharSeletor() {
 
 /* -------------------------------------------------------- filtros / cores */
 function aplicar() {
+  // se a mancha aberta deixou de existir nesta posição da régua de prédios, fecha a ficha
+  const aberta = selecionada && porId.get(selecionada);
+  if (aberta && (aberta.properties.na > est.predio || aberta.properties.nb < est.predio)) return fecharDetalhe(), aplicar();
   const f = exprFiltro();
   for (const id of ['manchas-fill', 'manchas-line', 'pontos']) map.setFilter(id, f);
   map.setPaintProperty('manchas-fill', 'fill-color', exprCor());
@@ -319,7 +329,7 @@ function atualizarLista() {
     return `<li data-id="${esc(p.id)}" class="${selecionada === p.id ? 'sel' : ''}">
       <span class="faixa" style="background:${CORES[p[est.modo]]}"></span>
       <span class="corpo"><span class="tit">${esc(titulo(p))}</span>
-        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.vila ? ' · vila' : ''}${m._alerta ? ' · ⚠' : ''}</span></span>
+        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.np ? ` · ${plural(p.np, 'prédio', 'prédios')}` : ''}${p.vila ? ' · vila' : ''}${m._alerta ? ' · ⚠' : ''}</span></span>
       <span class="num"><b>${fmt(p.area)} m²</b><span>${est.modo === 'faixa' ? `equiv. ${fmt(p.area_eq)}` : `IPTU ${fmt(p.area_iptu)}`}</span></span>
     </li>`; }).join('') + (lista.length > top.length ? `<li class="vazio">+ ${fmt(lista.length - top.length)} manchas — aproxime o mapa ou refine os filtros.</li>` : '')
     : '<li class="vazio">Nenhuma mancha com esses filtros nesta área. Afaste o mapa, relaxe os filtros ou marque outros zoneamentos.</li>';
@@ -355,11 +365,25 @@ async function carregarLotes() {
   await Promise.all(arqs.map(buscarLotes));
   if (meu === pedido) desenharLotes();
 }
+// Um lote pode pertencer a manchas diferentes conforme a régua de prédios:
+// "m" lista todas; vale a que está visível com os filtros atuais.
+function manchaDoLote(l) {
+  for (const id of l.properties.m.split(',')) {
+    const m = porId.get(id);
+    if (m && passa(m)) return m;
+  }
+  return null;
+}
 async function desenharLotes() {
   if (!map.getSource('lotes') || map.getZoom() < ZOOM_LOTES - 0.5) return;
   const arqs = arquivosVisiveis().filter(c => cacheLotes.has(c));
   const partes = await Promise.all(arqs.map(c => cacheLotes.get(c)));
-  const feats = partes.flat().filter(l => { const m = porId.get(l.properties.m); return m && passa(m); });
+  const vistos = new Set();
+  const feats = partes.flat().filter(l => {
+    if (vistos.has(l.properties.sql) || !manchaDoLote(l)) return false;
+    vistos.add(l.properties.sql);
+    return true;
+  });
   map.getSource('lotes').setData(fc(feats));
 }
 
@@ -369,8 +393,8 @@ function dicaMancha(p) {
   const al = alertasDe(p).map(k => `<div class="al">⚠ ${ALERTAS[k]} — ${plural(p['a_' + k], 'lote', 'lotes')}</div>`).join('');
   return `<table class="dica-t">
     <tr><td>Área total</td><td><b>${fmt(p.area)} m²</b></td></tr>
-    <tr><td>Área construída</td><td>${fmt(p.ac)} m²</td></tr>
-    <tr><td>Lotes</td><td>${p.n}</td></tr>
+    <tr><td>Área construída</td><td>${p.np ? '~' : ''}${fmt(p.ac)} m²</td></tr>
+    <tr><td>Lotes</td><td>${p.n}${p.np ? ` <span class="sec">(${plural(p.np, 'prédio', 'prédios')})</span>` : ''}</td></tr>
     <tr><td>Zoneamento</td><td>${esc(p.zona)}</td></tr></table>${al}`;
 }
 
@@ -426,7 +450,7 @@ async function selecionar(id, voar = true, sqlDestaque = null) {
   $$('#lista li').forEach(li => li.classList.toggle('sel', li.dataset.id === id));
   desenharDetalhe(m, null);
   gravarHash();
-  const lotes = (await buscarLotes(`${m.properties.zona}/${m.properties.cel}`)).filter(l => l.properties.m === id);
+  const lotes = (await buscarLotes(`${m.properties.zona}/${m.properties.cel}`)).filter(l => l.properties.m.split(',').includes(id));
   if (selecionada === id) {
     desenharDetalhe(m, lotes);
     if (sqlDestaque) destacarLote(lotes, sqlDestaque);
@@ -463,6 +487,7 @@ function desenharDetalhe(m, lotes) {
       <div class="cartao"><span>Lotes</span><b>${p.n}</b></div>
     </div>
     ${al.length ? `<div class="alerta"><b>⚠ Pontos de atenção</b><ul>${al.map(k => `<li>${ALERTAS[k]} — ${plural(p['a_' + k], 'lote', 'lotes')}</li>`).join('')}</ul>Os lotes atingidos estão marcados na tabela abaixo.</div>` : ''}
+    ${p.np ? `<div class="alerta info">Inclui <b>${plural(p.np, 'prédio', 'prédios')}</b> (lotes “CD”, mais escuros no mapa). A área construída deles é <b>estimada pela volumetria</b> — projeção × pavimentos, de um levantamento de 2014 — e não conta subsolos. Para ver o número de unidades, use o botão “i” do GeoSampa no setor, quadra e CD indicados na tabela.</div>` : ''}
     ${p.vila === 'completa' ? `<div class="alerta info">Inclui uma <b>vila completa</b>: a passagem (em azul no mapa) e todas as casas que dão para ela estão na mancha. A área da passagem está somada.</div>` : ''}
     ${p.vila === 'parcial' ? `<div class="alerta info">Inclui <b>passagem de vila</b> (em azul no mapa), mas alguma casa que encosta nela ficou de fora da mancha — tombada, prédio, com restrição ou em outro zoneamento.</div>` : ''}
     <h2>Forma do terreno unificado · nota ${p.forma}/100</h2>
@@ -477,7 +502,7 @@ function desenharDetalhe(m, lotes) {
     <dl class="fatos">
       <dt>Zoneamento</dt><dd>${esc(p.zona)}${zonaInfo.get(p.zona)?.nome ? ' — ' + esc(zonaInfo.get(p.zona).nome) : ''}</dd>
       <dt>Área pelo IPTU</dt><dd>${fmt(p.area_iptu)} m²</dd>
-      <dt>Construído hoje</dt><dd>${fmt(p.ac)} m² · CA médio ${String(p.ca).replace('.', ',')}</dd>
+      <dt>Construído hoje</dt><dd>${p.np ? '~' : ''}${fmt(p.ac)} m² · CA médio ${String(p.ca).replace('.', ',')}${p.np ? ' <small>(prédios estimados)</small>' : ''}</dd>
       <dt>Usos</dt><dd>${esc(p.usos)}</dd>
       <dt>Transporte</dt><dd>${esc(p.est)} a ${fmt(p.est_m)} m</dd>
     </dl>
@@ -488,8 +513,8 @@ function desenharDetalhe(m, lotes) {
     </div>
     <h2>Lotes da mancha</h2>
     ${lotes ? `<table class="lotes"><thead><tr><th>Endereço / SQL</th><th class="n">Terreno</th><th class="n">Constr.</th><th>Uso</th></tr></thead><tbody>
-      ${lotes.map(l => { const q = l.properties; return `<tr data-sql="${esc(q.sql)}"><td>${esc(q.end || '—')}<div class="sqlc">${esc(q.sql)}</div>${q.al ? `<div class="lote-al">⚠ ${esc(rotLote(q))}</div>` : ''}</td>
-        <td class="n">${fmt(q.at || q.ag)}</td><td class="n">${fmt(q.ac)}</td><td>${esc(q.uso.replace('Não residencial', 'Não resid.'))}</td></tr>`; }).join('')}
+      ${lotes.map(l => { const q = l.properties; return `<tr data-sql="${esc(q.sql)}"><td>${esc(q.end || '—')}<div class="sqlc">${esc(q.sql)}${q.p ? ` · ~${q.pav} pav. · ${String(q.h).replace('.', ',')} m` : ''}</div>${q.al ? `<div class="lote-al">⚠ ${esc(rotLote(q))}</div>` : ''}</td>
+        <td class="n">${fmt(q.at || q.ag)}</td><td class="n">${q.p ? '~' : ''}${fmt(q.ac)}</td><td>${esc(q.uso.replace('Não residencial', 'Não resid.'))}</td></tr>`; }).join('')}
       </tbody></table>` : '<p class="nota">Carregando lotes…</p>'}`;
   el.hidden = false;
   el.scrollTop = 0;
@@ -501,8 +526,10 @@ function desenharDetalhe(m, lotes) {
   };
   if (lotes) {
     $('#csv-lotes').onclick = () => baixarCSV(`lotes_${p.id}.csv`,
-      ['SQL', 'Endereço', 'Zona', 'Uso', 'Área terreno IPTU (m²)', 'Área do desenho (m²)', 'Área construída (m²)', 'Alertas'],
-      lotes.map(l => { const q = l.properties; return [q.sql, q.end, p.zona, q.uso, q.at, q.ag, q.ac, rotLote(q)]; }));
+      ['SQL', 'Endereço', 'Zona', 'Uso', 'Área terreno IPTU (m²)', 'Área do desenho (m²)', 'Área construída (m²)',
+        'Área construída é estimativa', 'Pavimentos (estimados)', 'Altura (m)', 'Alertas'],
+      lotes.map(l => { const q = l.properties; return [q.sql, q.end, p.zona, q.uso, q.at, q.ag, q.ac,
+        q.p ? 'sim' : '', q.pav ?? '', q.h != null ? String(q.h).replace('.', ',') : '', rotLote(q)]; }));
     $$('table.lotes tr[data-sql]').forEach(tr => tr.onclick = () => destacarLote(lotes, tr.dataset.sql));
   }
 }
@@ -531,6 +558,8 @@ function sincronizarControles() {
   $('#f-area').value = est.area; $('#f-forma').value = est.forma;
   $('#f-nmax').value = est.nmax; $('#f-est').value = est.est; $('#f-pnr').value = est.pnr;
   $('#o-pnr').textContent = est.pnr >= 100 ? 'sem limite' : `${est.pnr}%`;
+  $('#f-predio').value = est.predio;
+  $('#o-predio').textContent = est.predio <= 0 ? 'sem prédios' : `até ${String(est.predio).replace('.', ',')}×`;
   $('#f-vila').checked = est.vila; $('#f-sem-alerta').checked = est.semAlerta;
   $('#so-tela').checked = est.soTela; $('#ordem').value = est.ordem;
   $('#o-area').textContent = fmt(est.area); $('#o-forma').textContent = est.forma;
@@ -546,7 +575,7 @@ function ligarInterface() {
     est[chave] = e.target.type === 'checkbox' ? e.target.checked : conv(e.target.value);
     sincronizarControles(); aplicar();
   });
-  liga('#f-area', 'area'); liga('#f-forma', 'forma'); liga('#f-nmax', 'nmax'); liga('#f-est', 'est'); liga('#f-pnr', 'pnr');
+  liga('#f-area', 'area'); liga('#f-forma', 'forma'); liga('#f-nmax', 'nmax'); liga('#f-est', 'est'); liga('#f-pnr', 'pnr'); liga('#f-predio', 'predio');
   liga('#f-vila', 'vila'); liga('#f-sem-alerta', 'semAlerta'); liga('#so-tela', 'soTela');
   liga('#ordem', 'ordem', String);
   let t;
@@ -604,10 +633,10 @@ function ligarInterface() {
     const l = manchas.filter(passa);
     baixarCSV('manchas.csv',
       ['ID (setor-quadra-lote)', 'Zoneamento', 'Distrito', 'Ruas', 'Área somada (m²)', 'Área IPTU (m²)', 'Área equivalente (m²)',
-        'Faixa', 'Lotes', 'Nota de forma', 'Retangularidade', 'Miolo aproveitável', 'Perímetro×área', 'Vértices',
+        'Faixa', 'Lotes', 'Prédios', 'Nota de forma', 'Retangularidade', 'Miolo aproveitável', 'Perímetro×área', 'Vértices',
         'Área construída (m²)', 'CA médio', 'Usos', 'Vila', 'Alertas', 'Estação mais próxima', 'Distância (m)', 'Latitude', 'Longitude', 'Link'],
       l.map(m => { const p = m.properties; return [p.id, p.zona, p.distrito, p.ruas, p.area, p.area_iptu, p.area_eq,
-        ['forma compromete', 'vermelho', 'amarelo', 'verde'][p.faixa], p.n, p.forma, p.ret, p.miolo, p.comp, p.nv, p.ac,
+        ['forma compromete', 'vermelho', 'amarelo', 'verde'][p.faixa], p.n, p.np, p.forma, p.ret, p.miolo, p.comp, p.nv, p.ac,
         String(p.ca).replace('.', ','), p.usos, p.vila,
         alertasDe(p).map(k => `${ALERTAS[k]} (${p['a_' + k]})`).join(' | '),
         p.est, p.est_m, String(p.lat).replace('.', ','), String(p.lon).replace('.', ','),
@@ -623,7 +652,8 @@ function preencherCriterios() {
   const p = meta.parametros, pct = v => Math.round(v * 100);
   const v = { ca: String(p.ca_max_casa).replace('.', ','), divisa: p.divisa_min, amin: fmt(p.area_min),
     'p-ret': pct(p.pesos.ret), 'p-miolo': pct(p.pesos.miolo), 'p-comp': pct(p.pesos.comp), 'p-vert': pct(p.pesos.vert),
-    largura: p.raio_miolo * 2, vi: p.vert_ideal, vr: p.vert_ruim, fsp: pct(p.forma_sem_penalidade) };
+    largura: p.raio_miolo * 2, vi: p.vert_ideal, vr: p.vert_ruim, fsp: pct(p.forma_sem_penalidade),
+    hpav: String(meta.regua_predios.altura_pavimento).replace('.', ',') };
   $$('[data-p]').forEach(s => s.textContent = v[s.dataset.p]);
   $('#meta-rodape').textContent = `${fmt(meta.lotes_analisados)} lotes analisados · ${fmt(meta.lotes_elegiveis)} elegíveis · ${fmt(meta.manchas)} manchas em ${meta.zonas.length} zoneamentos. Fonte: ${meta.fonte}.`;
 }
