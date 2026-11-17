@@ -7,8 +7,11 @@ Regras (premissas de novos negócios):
      área envoltória e não atingido por área cedida, CAP, diretriz (DZ),
      desmembramento de gleba (DG) ou conjunto (CJ). Também saem os lotes de
      hospitais, escolas estaduais, polícia/guarda civil (cadastros de
-     equipamentos do GeoSampa) e os prováveis lançamentos: terreno sem
-     construção, sem número e com LANCAMENTO_AREA_MIN m² ou mais.
+     equipamentos do GeoSampa); os lotes dentro de operação urbana (perímetro
+     principal, não o expandido); e os lançamentos: lotes com empreendimento
+     licenciado (outorga onerosa, alvará HIS/HMP, cota de solidariedade,
+     fruição pública, EIV, habitação pública) ou terreno sem construção, sem
+     número e com LANCAMENTO_AREA_MIN m² ou mais.
   2. Lotes elegíveis contíguos (divisa comum >= DIVISA_MIN m) E DO MESMO
      ZONEAMENTO formam uma "mancha". Passagens de vila (lotes "V") entram como
      elo: unem as casas dos dois lados e somam área, sem contar como lote.
@@ -80,7 +83,30 @@ EQUIPAMENTOS = {
     "eq_policia_civil": ("polícia / guarda civil", None),
     "eq_policia_militar": ("polícia / guarda civil", None),
     "eq_guarda_civil": ("polícia / guarda civil", None),
+    # Sinais de empreendimento novo, em obra ou em aprovação (lançamento)
+    "lic_oodc": ("empreendimento licenciado (outorga onerosa)",
+                 lambda p: p.get("tx_situacao_pagamento") not in ("INDEFERIDO", "DESISTÊNCIA")),
+    "lic_his_hmp": ("empreendimento licenciado (alvará HIS/HMP)", None),
+    "lic_cota": ("empreendimento licenciado (cota de solidariedade)", None),
+    "lic_fruicao": ("empreendimento licenciado (fruição pública)", None),
+    "lic_eiv": ("empreendimento licenciado (EIV)", lambda p: p.get("st_licenca_empreendimento") == "DEFERIDO"),
+    # habitação pública: só o que está em projeto ou obra (o já entregue não é lançamento)
+    "lic_habi": ("empreendimento habitacional público em obra/projeto",
+                 lambda p: not (p.get("Estagio") or "").startswith(("00", "01"))),
 }
+# Onde o cadastro traz o SQL do terreno, casa também pelo código (setor, quadra, lote)
+SQL_DO_REGISTRO = {
+    "lic_oodc": lambda p: ((p.get("cd_setor_quadra") or "")[:3], (p.get("cd_setor_quadra") or "")[3:6],
+                           (p.get("tx_codigo_lote") or "")[:4]),
+    "lic_cota": lambda p: ((p.get("cd_setor_quadra") or "")[:3], (p.get("cd_setor_quadra") or "")[3:6],
+                           (p.get("tx_codigo_lote") or "")[:4]),
+    "lic_fruicao": lambda p: ((p.get("cd_setor_quadra") or "")[:3], (p.get("cd_setor_quadra") or "")[3:6],
+                              (p.get("tx_codigo_lote") or "")[:4]),
+    "lic_his_hmp": lambda p: ((p.get("cd_sql_incra") or "")[:3], (p.get("cd_sql_incra") or "")[3:6],
+                              (p.get("cd_sql_incra") or "")[6:10]),
+}
+# Camadas em que o lote só sai se estiver DENTRO (metade ou mais da área)
+RESTRICOES_DENTRO = {"operacao_urbana": "operação urbana"}
 
 ZONAS_FORA = {"Praça/Canteiro", "VETADO"}       # não são zonas de uso
 ZONAS_PADRAO = ["ZEU", "ZC", "ZEIS-5", "ZEM"]   # marcadas ao abrir o mapa
@@ -283,11 +309,21 @@ def main():
     # --------------------------------- equipamentos (hospital, escola, polícia)
     log("Cruzando com equipamentos…")
     arv_lotes = STRtree(geoms)
+    por_sql = {}
+    for i, p in enumerate(props):
+        if p["cd_tipo_lote"] == "F" and p["cd_condominio"] == "00":
+            por_sql[(p["cd_setor_fiscal"], p["cd_quadra_fiscal"], p["cd_lote"])] = i
     for arq, (rotulo, filtro) in EQUIPAMENTOS.items():
         eg, ep = carregar(arq + ".json")
         if filtro:
-            eg = eg[[bool(filtro(p)) for p in ep]]
+            m = [bool(filtro(p)) for p in ep]
+            eg, ep = eg[m], [p for p, v in zip(ep, m) if v]
         achados = set()
+        if arq in SQL_DO_REGISTRO:
+            for p in ep:
+                k = por_sql.get(SQL_DO_REGISTRO[arq](p))
+                if k is not None:
+                    achados.add(k)
         for x in eg:
             if x.geom_type == "Point":
                 dentro = arv_lotes.query(x, predicate="intersects")
@@ -359,6 +395,20 @@ def main():
         idx = np.flatnonzero(ok)
         for i in atingidos(geoms, idx, cg):
             ok[i] = False
+            motivo[rotulo] += 1
+
+    for camada, rotulo in RESTRICOES_DENTRO.items():
+        cg, cprops = carregar(camada + ".json")
+        if camada == "operacao_urbana":          # só o perímetro principal de cada operação
+            cg = cg[["expandido" not in (p.get("nm_operacao_urbana") or "").lower() for p in cprops]]
+        camadas_restr[camada] = cg
+        pedacos, _ = subdividir(cg)
+        idx = np.flatnonzero(ok)
+        li, ci = STRtree(pedacos).query(geoms[idx], predicate="intersects")
+        coberta = np.zeros(len(idx))
+        np.add.at(coberta, li, shapely.area(shapely.intersection(geoms[idx][li], pedacos[ci])))
+        for l in np.flatnonzero(coberta >= 0.5 * area_geo[idx]):
+            ok[idx[l]] = False
             motivo[rotulo] += 1
 
     # ------------------------------------------ duplicatas sobrepostas
@@ -657,7 +707,7 @@ def main():
                            "sit": (p["tx_situacao_tombamento"] or "").strip()})
         for x, p in zip(tg, tp))})
     gravar("restricoes.geojson.gz", {"type": "FeatureCollection", "features": feicoes(
-        (x.simplify(1.0), {"t": RESTRICOES[camada]})
+        (x.simplify(1.0), {"t": {**RESTRICOES, **RESTRICOES_DENTRO}[camada]})
         for camada, cg in camadas_restr.items() for x in cg)})
     gravar("alertas.geojson.gz", {"type": "FeatureCollection", "features": feicoes(
         (x.simplify(1.5 if cod != "g1" else 5.0), {"t": cod})

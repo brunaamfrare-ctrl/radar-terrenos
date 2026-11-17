@@ -51,10 +51,11 @@ def wfs_get(params, tentativas=6):
 def baixar_camada(camada, cql=None, ordenar="cd_identificador"):
     feats, inicio = [], 0
     while True:
-        p = {"typeNames": f"geoportal:{camada}", "count": PAGINA,
-             "startIndex": inicio}
+        p = {"typeNames": f"geoportal:{camada}", "count": PAGINA}
         if ordenar:
             p["sortBy"] = ordenar
+        if ordenar or inicio:      # camadas sem chave recusam startIndex sem ordenação
+            p["startIndex"] = inicio
         if cql:
             p["CQL_FILTER"] = cql
         d = wfs_get(p)
@@ -97,6 +98,7 @@ RESTRICOES = {
     "diretriz": ("diretriz", None),
     "desmembramento_gleba": ("desmembramento_gleba", None),
     "conjunto": ("conjunto", None),
+    "operacao_urbana": ("operacao_urbana", None),
 }
 ALERTAS = {
     "melhoramento_viario": ("geoconvias_lei_melhoramento_vigente", None),
@@ -119,9 +121,20 @@ EQUIPAMENTOS = {
 }
 
 
+# Sinais de empreendimento novo ou em aprovação (lançamento): o lote é descartado.
+LICENCIAMENTOS = {
+    "lic_oodc": "outorga_onerosa_direito_construir",
+    "lic_his_hmp": "habitacao_popular",
+    "lic_cota": "cota_solidariedade_ponto",
+    "lic_fruicao": "fruicao_publica",
+    "lic_eiv": "GEOSAMPA_licenca_obra",
+    "lic_habi": "habita2geosampa_habi_conjhabitacional2geosampa_ext",
+}
+
+
 def baixar_equipamentos():
-    print("Equipamentos…")
-    for nome, camada in EQUIPAMENTOS.items():
+    print("Equipamentos e licenciamentos…")
+    for nome, camada in {**EQUIPAMENTOS, **LICENCIAMENTOS}.items():
         salvar(f"{nome}.json", baixar_camada(camada, ordenar=None))
 
 
@@ -136,6 +149,7 @@ def main():
     if "--so-apoio" in sys.argv:
         return baixar_apoio()
     if "--so-equipamentos" in sys.argv:
+        salvar("operacao_urbana.json", baixar_camada("operacao_urbana", ordenar=None))
         return baixar_equipamentos()
 
     print("Zoneamento…")

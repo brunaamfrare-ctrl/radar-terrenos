@@ -12,7 +12,8 @@ O site é estático e fica na pasta `docs/` (publicado pelo GitHub Pages).
 | Etapa | Regra |
 |---|---|
 | Lote elegível | Lote fiscal do GeoSampa, fora de condomínio ("CD"), com área construída ÷ área do terreno ≤ 4 |
-| Exclusões | Tombado · em área envoltória (CONPRESP/CONDEPHAAT/IPHAN) · atingido por área cedida, cadastro de área pública (CAP), diretriz (DZ), desmembramento de gleba (DG) ou conjunto (CJ) · hospital, escola estadual, polícia civil/militar e guarda civil (cadastros de equipamentos do GeoSampa) · provável lançamento (terreno sem construção, sem número, com 1.000 m² ou mais) |
+| Exclusões | Tombado · em área envoltória (CONPRESP/CONDEPHAAT/IPHAN) · atingido por área cedida, cadastro de área pública (CAP), diretriz (DZ), desmembramento de gleba (DG) ou conjunto (CJ) · hospital, escola estadual, polícia civil/militar e guarda civil (cadastros de equipamentos do GeoSampa) · dentro de operação urbana (perímetro principal de Faria Lima, Água Branca, Água Espraiada e Centro; os perímetros expandidos não excluem) |
+| Lançamentos e prédios novos | Sai o lote com empreendimento licenciado: outorga onerosa (2000–2026, exceto indeferidos e desistências), alvará de HIS/HMP (2019–2026), cota de solidariedade, fruição pública, EIV deferido e habitação pública em projeto ou obra. Também sai o terreno sem construção, sem número, com 1.000 m² ou mais |
 | Mancha | Lotes elegíveis do mesmo zoneamento (Lei 18.177/24) com divisa comum ≥ 3 m, somando ≥ 2.500 m² |
 | Prédios | Lote em condomínio ("CD") entra na mancha quando a área construída estimada ÷ terreno é ≤ a régua "CA máximo dos prédios" do mapa (0 a 4, de 0,5 em 0,5; padrão 4). A área é estimada pela volumetria da camada "Edificações": projeção de cada volume × pavimentos (altura ÷ 2,9 m). Não conta subsolos e o levantamento é de 2014 |
 | Vilas | A passagem de vila (lote "V" — via de acesso) entra como elo: une as casas dos dois lados e soma área, sem contar como lote a negociar. A vila é "completa" quando toda casa que encosta na passagem está na mancha |
@@ -44,7 +45,8 @@ Depois é só fazer commit da pasta `docs/dados/`.
 
 GeoSampa / Prefeitura de São Paulo (WFS): `lote_cidadao`, `perimetro_zona_lei_18177_24`,
 bens tombados e áreas envoltórias, área cedida, CAP, passagem, diretriz, desmembramento de gleba,
-conjunto, lei de melhoramento viário vigente, plantas DUP/DIS, carta geotécnica 2024, áreas
+conjunto, operações urbanas, outorga onerosa, alvarás de HIS/HMP, cota de solidariedade, fruição pública,
+EIV, empreendimentos habitacionais, lei de melhoramento viário vigente, plantas DUP/DIS, carta geotécnica 2024, áreas
 contaminadas (SVMA e SIGAC), equipamentos de saúde, educação e segurança, distritos e estações
 de metrô/trem.
 

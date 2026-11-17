@@ -4,14 +4,8 @@
 
 const CORES = { 0: '#8a8f98', 1: '#e5484d', 2: '#f2b600', 3: '#22a04b' };
 const ROTULOS = {
-  faixa: {
-    3: ['≥ 6.000 m²', 'área equivalente'], 2: ['4.000 – 6.000 m²', 'área equivalente'],
-    1: ['2.500 – 4.000 m²', 'área equivalente'], 0: ['Forma compromete', 'equivalente < 2.500 m²'],
-  },
-  faixa_area: {
-    3: ['≥ 6.000 m²', 'área somada'], 2: ['4.000 – 6.000 m²', 'área somada'],
-    1: ['2.500 – 4.000 m²', 'área somada'],
-  },
+  faixa: { 3: '6 mil+', 2: '4–6 mil', 1: '2,5–4 mil', 0: 'Forma ruim' },
+  faixa_area: { 3: '6 mil+', 2: '4–6 mil', 1: '2,5–4 mil' },
 };
 // Alertas: não excluem a mancha, mas aparecem ao passar o mouse e na ficha.
 const ALERTAS = {
@@ -36,6 +30,19 @@ const fmt = n => Math.round(n).toLocaleString('pt-BR');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const plural = (n, s, p) => `${fmt(n)} ${n === 1 ? s : p}`;
+const ABREV = { R: 'R.', AV: 'Av.', AL: 'Al.', TV: 'Tv.', PC: 'Pç.', PCA: 'Pç.', ES: 'Estr.', EST: 'Estr.', VD: 'Vd.', LG: 'Lgo.',
+  ROD: 'Rod.', PQ: 'Pq.', PSG: 'Psg.', VE: 'Viela', LD: 'Ld.', DR: 'Dr.', PROF: 'Prof.', ENG: 'Eng.', CEL: 'Cel.', GAL: 'Gal.',
+  PDE: 'Pe.', CAP: 'Cap.', MAL: 'Mal.', DES: 'Des.', SEN: 'Sen.', DEP: 'Dep.', MIN: 'Min.', STA: 'Sta.', STO: 'Sto.', S: 'S.',
+  BRIG: 'Brig.', ALM: 'Alm.', TEN: 'Ten.', SGT: 'Sgt.', D: 'D.', PRES: 'Pres.', GOV: 'Gov.', VER: 'Ver.', COM: 'Com.',
+  MAJ: 'Maj.', CARD: 'Card.', JD: 'Jd.', VL: 'Vl.', VISC: 'Visc.', BR: 'Br.', CON: 'Côn.' };
+const MINUSCULAS = new Set(['DE', 'DA', 'DO', 'DAS', 'DOS', 'E']);
+const nomeProprio = s => String(s ?? '').split(' ').map((w, i) => {
+  const u = w.toUpperCase();
+  if (ABREV[u]) return ABREV[u];
+  if (i && MINUSCULAS.has(u)) return u.toLowerCase();
+  if (/^(?=[IVX]{2,4}$)X{0,3}(IX|IV|V?I{0,3})$/.test(u)) return u;
+  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+}).join(' ');
 
 let est = structuredClone(PADRAO);
 let meta = null, manchas = [], porId = new Map(), selecionada = null;
@@ -131,7 +138,7 @@ map.on('load', async () => {
     [meta, tombados, estacoes] = await Promise.all([
       dados('meta.json'), dados('tombados.geojson.gz'), dados('estacoes.geojson')]);
   } catch (e) {
-    $('#subtitulo').textContent = 'Não foi possível carregar os dados.';
+    $('#subtitulo').textContent = 'Erro ao carregar os dados';
     console.error(e);
     return;
   }
@@ -197,8 +204,7 @@ map.on('load', async () => {
   map.addLayer({ id: 'lote-sel', type: 'line', source: 'lote-sel',
     paint: { 'line-color': '#0f5fd7', 'line-width': 3 } });
 
-  $('#subtitulo').textContent = `São Paulo · dados GeoSampa de ${meta.gerado_em.split('-').reverse().join('/')}`;
-  preencherCriterios();
+  $('#subtitulo').textContent = `GeoSampa · ${meta.gerado_em.split('-').reverse().join('/')}`;
 
   // zoneamentos marcados: link > última escolha neste navegador > padrão
   const h = new URLSearchParams(location.hash.slice(1));
@@ -246,7 +252,7 @@ async function trocarZonas() {
   const lista = [...zonasSel];
   try { localStorage.setItem(CHAVE_ZONAS, JSON.stringify(lista)); } catch { /* sem armazenamento */ }
   desenharSeletor();
-  $('#contagem').textContent = 'Carregando zoneamentos…';
+  $('#contagem').textContent = 'Carregando…';
   const [ms, ps] = await Promise.all([
     Promise.all(lista.map(buscarManchas)), Promise.all(lista.map(buscarPerimetro))]);
   if (minha !== trocaAtual) return;
@@ -263,11 +269,12 @@ async function trocarZonas() {
 
 function desenharSeletor() {
   const sel = [...zonasSel];
-  $('#zonas-resumo').textContent = sel.length ? sel.join(', ') : 'nenhum';
+  $('#zonas-resumo').innerHTML = sel.map(z => `<span class="zchip"><i style="background:${zonaInfo.get(z).cor}"></i>${esc(z)}</span>`).join('')
+    + '<span class="zchip mais">Zoneamentos</span>';
   $('#zonas-lista').innerHTML = meta.zonas.map(z => {
     const i = zonaInfo.get(z.cod);
     return `<label title="${esc(z.nome)}"><input type="checkbox" value="${esc(z.cod)}" ${zonasSel.has(z.cod) ? 'checked' : ''}>
-      <i class="am" style="background:${i.cor}33;border:1.5px solid ${i.cor}"></i>
+      <i style="background:${i.cor}"></i>
       <span class="zc">${esc(z.cod)}</span><span class="zn">${esc(z.nome)}</span><span class="zq">${fmt(z.manchas)}</span></label>`;
   }).join('');
 }
@@ -297,8 +304,7 @@ function desenharLegenda() {
   const rot = ROTULOS[est.modo];
   $('#legenda').innerHTML = [3, 2, 1, 0].filter(k => rot[k]).map(k => `
     <button type="button" data-faixa="${k}" class="${est.faixas[k] ? '' : 'off'}" aria-pressed="${!!est.faixas[k]}">
-      <span class="cor" style="background:${CORES[k]}"></span>
-      <span><b>${rot[k][0]}</b><small>${fmt(cont[k])} manchas · ${rot[k][1]}</small></span>
+      <span class="cor" style="background:${CORES[k]}"></span><b>${rot[k]}</b><small>${fmt(cont[k])}</small>
     </button>`).join('');
 }
 
@@ -309,7 +315,8 @@ function visiveis() {
   return lista.filter(m => b.contains([m.properties.lon, m.properties.lat]));
 }
 
-const titulo = p => p.ruas ? p.ruas.split(' · ').slice(0, 2).join(' × ') : `Quadra ${p.id.slice(0, 7)}`;
+const ruasDe = p => (p.ruas ? p.ruas.split(' · ') : []).map(nomeProprio);
+const titulo = p => { const r = ruasDe(p); return r.length ? r.slice(0, 2).join(' × ') : `Quadra ${p.id.slice(0, 7)}`; };
 
 function atualizarLista() {
   const campo = est.modo === 'faixa' ? 'area_eq' : 'area';
@@ -321,18 +328,19 @@ function atualizarLista() {
   }[est.ordem];
   const lista = visiveis().sort((a, b) => chave(a.properties) - chave(b.properties));
   const total = manchas.filter(passa).length;
-  $('#contagem').textContent = !zonasSel.size ? 'Marque ao menos um zoneamento'
+  $('#contagem').textContent = !zonasSel.size ? 'Marque um zoneamento'
     : est.soTela && !est.busca ? `${fmt(lista.length)} na tela · ${fmt(total)} no total` : `${fmt(total)} manchas`;
   const top = lista.slice(0, 150);
   $('#lista').innerHTML = top.length ? top.map(m => {
     const p = m.properties;
+    const sub = [nomeProprio(p.distrito), p.zona, plural(p.n, 'lote', 'lotes'), p.np ? plural(p.np, 'prédio', 'prédios') : '',
+      p.vila ? 'vila' : '', m._alerta ? '⚠' : ''].filter(Boolean).join(' · ');
     return `<li data-id="${esc(p.id)}" class="${selecionada === p.id ? 'sel' : ''}">
       <span class="faixa" style="background:${CORES[p[est.modo]]}"></span>
-      <span class="corpo"><span class="tit">${esc(titulo(p))}</span>
-        <span class="sub">${esc(p.distrito)} · ${esc(p.zona)} · ${p.n} lote${p.n > 1 ? 's' : ''} · forma ${p.forma}${p.np ? ` · ${plural(p.np, 'prédio', 'prédios')}` : ''}${p.vila ? ' · vila' : ''}${m._alerta ? ' · ⚠' : ''}</span></span>
-      <span class="num"><b>${fmt(p.area)} m²</b><span>${est.modo === 'faixa' ? `equiv. ${fmt(p.area_eq)}` : `IPTU ${fmt(p.area_iptu)}`}</span></span>
-    </li>`; }).join('') + (lista.length > top.length ? `<li class="vazio">+ ${fmt(lista.length - top.length)} manchas — aproxime o mapa ou refine os filtros.</li>` : '')
-    : '<li class="vazio">Nenhuma mancha com esses filtros nesta área. Afaste o mapa, relaxe os filtros ou marque outros zoneamentos.</li>';
+      <span class="corpo"><span class="tit">${esc(titulo(p))}</span><span class="sub">${esc(sub)}</span></span>
+      <span class="num"><b>${fmt(p.area)} m²</b><span>forma ${p.forma}</span></span>
+    </li>`; }).join('') + (lista.length > top.length ? `<li class="vazio">+ ${fmt(lista.length - top.length)} manchas</li>` : '')
+    : '<li class="vazio">Nenhuma mancha aqui com esses filtros.</li>';
 }
 
 /* ------------------------------------------------------------------ lotes */
@@ -357,7 +365,7 @@ function buscarLotes(chave) {
 let pedido = 0;
 async function carregarLotes() {
   $('#aviso').hidden = map.getZoom() >= 12.5;
-  $('#aviso').textContent = 'Aproxime para ver o contorno das manchas e dos lotes';
+  $('#aviso').textContent = 'Aproxime para ver as manchas';
   if (map.getZoom() < ZOOM_LOTES - 0.5) return;
   const meu = ++pedido;
   const arqs = arquivosVisiveis();
@@ -445,7 +453,7 @@ async function selecionar(id, voar = true, sqlDestaque = null) {
     const xs = m.geometry.coordinates[0].map(c => c[0]), ys = m.geometry.coordinates[0].map(c => c[1]);
     const estreito = matchMedia('(max-width: 760px)').matches;
     map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]],
-      { padding: estreito ? 50 : 110, maxZoom: 17.6, duration: 700 });
+      { padding: estreito ? 50 : { top: 90, bottom: 90, right: 90, left: 470 }, maxZoom: 17.6, duration: 700 });
   }
   $$('#lista li').forEach(li => li.classList.toggle('sel', li.dataset.id === id));
   desenharDetalhe(m, null);
@@ -468,60 +476,58 @@ function destacarLote(lotes, sql) {
 function desenharDetalhe(m, lotes) {
   const p = m.properties, el = $('#detalhe');
   const fx = p.faixa, par = meta.parametros;
+  const virg = v => String(v).replace('.', ',');
   const fator = Math.min(1, p.forma / (par.forma_sem_penalidade * 100));
   const barra = (nome, v, txt) => `<div class="metrica"><span>${nome}</span><span class="trilho"><i style="width:${Math.max(2, Math.min(100, v))}%"></i></span><em>${txt ?? v}</em></div>`;
   const notaVert = Math.round(100 * Math.min(1, Math.max(0, 1 - (p.nv - par.vert_ideal) / (par.vert_ruim - par.vert_ideal))));
-  const rotFaixa = { 3: 'Verde · equiv. ≥ 6.000 m²', 2: 'Amarelo · equiv. ≥ 4.000 m²', 1: 'Vermelho · equiv. ≥ 2.500 m²', 0: 'Forma compromete' }[fx];
+  const rotFaixa = { 3: '6.000 m² ou mais', 2: '4.000 a 6.000 m²', 1: '2.500 a 4.000 m²', 0: 'Forma ruim' }[fx];
   const al = alertasDe(p);
   const rotLote = q => (q.al || '').split(',').filter(Boolean)
     .map(k => (k === 'cs' || k === 'cp') && q.cont ? q.cont : ALERTAS[k]).join(' · ');
+  const ruas = ruasDe(p);
   el.innerHTML = `
-    <div class="topo"><button class="link" id="voltar" type="button">← Voltar à lista</button>
-      <button class="link" id="copiar" type="button">Copiar link</button></div>
+    <div class="topo"><button class="botao-ic" id="voltar" type="button">← Lista</button>
+      <button class="botao-ic" id="copiar" type="button">Copiar link</button></div>
     <h3>${esc(titulo(p))}</h3>
-    <p class="onde">${esc(p.distrito)} · setor-quadra ${esc(p.id.slice(0, 7))}${p.ruas.split(' · ').length > 2 ? ' · também ' + esc(p.ruas.split(' · ').slice(2).join(', ')) : ''}</p>
-    <div class="tags"><span class="tag t${fx}">${rotFaixa}</span><span class="tag zona" title="${esc(zonaInfo.get(p.zona)?.nome || '')}">${esc(p.zona)}</span>${p.vila ? `<span class="tag vila">Vila ${p.vila}</span>` : ''}</div>
+    <p class="onde">${esc(nomeProprio(p.distrito))} · quadra ${esc(p.id.slice(0, 7))}${ruas.length > 2 ? ' · ' + esc(ruas.slice(2).join(', ')) : ''}</p>
+    <div class="tags"><span class="tag t${fx}">${rotFaixa}</span><span class="tag" title="${esc(zonaInfo.get(p.zona)?.nome || '')}">${esc(p.zona)}</span>${
+      p.np ? `<span class="tag">${plural(p.np, 'prédio', 'prédios')}</span>` : ''}${p.vila ? `<span class="tag">Vila ${p.vila}</span>` : ''}</div>
     <div class="cartoes">
-      <div class="cartao"><span>Área somada</span><b>${fmt(p.area)}</b> <small>m²</small></div>
-      <div class="cartao"><span>Área equivalente</span><b>${fmt(p.area_eq)}</b> <small>m²</small></div>
+      <div class="cartao"><span>Área</span><b>${fmt(p.area)}</b> <small>m²</small></div>
+      <div class="cartao"><span>Equivalente</span><b>${fmt(p.area_eq)}</b> <small>m²</small></div>
       <div class="cartao"><span>Lotes</span><b>${p.n}</b></div>
     </div>
-    ${al.length ? `<div class="alerta"><b>⚠ Pontos de atenção</b><ul>${al.map(k => `<li>${ALERTAS[k]} — ${plural(p['a_' + k], 'lote', 'lotes')}</li>`).join('')}</ul>Os lotes atingidos estão marcados na tabela abaixo.</div>` : ''}
-    ${p.np ? `<div class="alerta info">Inclui <b>${plural(p.np, 'prédio', 'prédios')}</b> (lotes “CD”, mais escuros no mapa). A área construída deles é <b>estimada pela volumetria</b> — projeção × pavimentos, de um levantamento de 2014 — e não conta subsolos. Para ver o número de unidades, use o botão “i” do GeoSampa no setor, quadra e CD indicados na tabela.</div>` : ''}
-    ${p.vila === 'completa' ? `<div class="alerta info">Inclui uma <b>vila completa</b>: a passagem (em azul no mapa) e todas as casas que dão para ela estão na mancha. A área da passagem está somada.</div>` : ''}
-    ${p.vila === 'parcial' ? `<div class="alerta info">Inclui <b>passagem de vila</b> (em azul no mapa), mas alguma casa que encosta nela ficou de fora da mancha — tombada, prédio, com restrição ou em outro zoneamento.</div>` : ''}
-    <h2>Forma do terreno unificado · nota ${p.forma}/100</h2>
+    ${al.length ? `<div class="avisos">${al.map(k => `<div><span>⚠ ${ALERTAS[k]}</span><em>${plural(p['a_' + k], 'lote', 'lotes')}</em></div>`).join('')}</div>` : ''}
+    <h2>Forma · ${p.forma}/100${fator < 1 ? ` · fator ${virg(fator.toFixed(2))}` : ''}</h2>
     <div class="metricas">
       ${barra('Retangularidade', p.ret)}
       ${barra('Miolo aproveitável', p.miolo)}
       ${barra('Perímetro × área', p.comp)}
-      ${barra('Vértices', notaVert, p.nv + ' v')}
+      ${barra('Vértices', notaVert, p.nv)}
     </div>
-    <p class="nota" style="margin:8px 0 0">${fator >= 1 ? 'Forma boa: a área conta integralmente.' : `Fator de forma ${fator.toFixed(2).replace('.', ',')}: ${fmt(p.area)} m² × ${fator.toFixed(2).replace('.', ',')} = ${fmt(p.area_eq)} m² equivalentes.`}</p>
     <h2>Dados</h2>
     <dl class="fatos">
-      <dt>Zoneamento</dt><dd>${esc(p.zona)}${zonaInfo.get(p.zona)?.nome ? ' — ' + esc(zonaInfo.get(p.zona).nome) : ''}</dd>
       <dt>Área pelo IPTU</dt><dd>${fmt(p.area_iptu)} m²</dd>
-      <dt>Construído hoje</dt><dd>${p.np ? '~' : ''}${fmt(p.ac)} m² · CA médio ${String(p.ca).replace('.', ',')}${p.np ? ' <small>(prédios estimados)</small>' : ''}</dd>
+      <dt>Construído</dt><dd>${p.np ? '~' : ''}${fmt(p.ac)} m² · CA ${virg(p.ca)}</dd>
       <dt>Usos</dt><dd>${esc(p.usos)}</dd>
-      <dt>Transporte</dt><dd>${esc(p.est)} a ${fmt(p.est_m)} m</dd>
+      <dt>Transporte</dt><dd>${esc(p.est)} · ${fmt(p.est_m)} m</dd>
     </dl>
     <div class="acoes">
       <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}">Google Maps</a>
       <a target="_blank" rel="noopener" href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lon}">Street View</a>
-      <button type="button" id="csv-lotes" ${lotes ? '' : 'disabled'}>CSV dos lotes</button>
+      <button type="button" id="csv-lotes" ${lotes ? '' : 'disabled'}>CSV</button>
     </div>
-    <h2>Lotes da mancha</h2>
-    ${lotes ? `<table class="lotes"><thead><tr><th>Endereço / SQL</th><th class="n">Terreno</th><th class="n">Constr.</th><th>Uso</th></tr></thead><tbody>
-      ${lotes.map(l => { const q = l.properties; return `<tr data-sql="${esc(q.sql)}"><td>${esc(q.end || '—')}<div class="sqlc">${esc(q.sql)}${q.p ? ` · ~${q.pav} pav. · ${String(q.h).replace('.', ',')} m` : ''}</div>${q.al ? `<div class="lote-al">⚠ ${esc(rotLote(q))}</div>` : ''}</td>
-        <td class="n">${fmt(q.at || q.ag)}</td><td class="n">${q.p ? '~' : ''}${fmt(q.ac)}</td><td>${esc(q.uso.replace('Não residencial', 'Não resid.'))}</td></tr>`; }).join('')}
-      </tbody></table>` : '<p class="nota">Carregando lotes…</p>'}`;
+    <h2>Lotes</h2>
+    ${lotes ? `<table class="lotes"><thead><tr><th>Endereço</th><th class="n">Terreno</th><th class="n">Constr.</th><th>Uso</th></tr></thead><tbody>
+      ${lotes.map(l => { const q = l.properties; return `<tr data-sql="${esc(q.sql)}"><td>${esc(nomeProprio(q.end) || '—')}<div class="sqlc">${esc(q.sql)}${q.p ? ` · ~${q.pav} pav. · ${virg(q.h)} m` : ''}</div>${q.al ? `<div class="lote-al">⚠ ${esc(rotLote(q))}</div>` : ''}</td>
+        <td class="n">${fmt(q.at || q.ag)}</td><td class="n">${q.p ? '~' : ''}${fmt(q.ac)}</td><td>${esc(q.uso.replace('Não residencial', 'Não resid.').replace('Residencial', 'Resid.'))}</td></tr>`; }).join('')}
+      </tbody></table>` : '<p class="nota">Carregando…</p>'}`;
   el.hidden = false;
   el.scrollTop = 0;
   document.getElementById('app').classList.add('aberto');
   $('#voltar').onclick = fecharDetalhe;
   $('#copiar').onclick = async ev => {
-    try { await navigator.clipboard.writeText(location.href); ev.target.textContent = 'Link copiado ✓'; }
+    try { await navigator.clipboard.writeText(location.href); ev.target.textContent = 'Copiado ✓'; }
     catch { prompt('Copie o link:', location.href); }
   };
   if (lotes) {
@@ -529,7 +535,7 @@ function desenharDetalhe(m, lotes) {
       ['SQL', 'Endereço', 'Zona', 'Uso', 'Área terreno IPTU (m²)', 'Área do desenho (m²)', 'Área construída (m²)',
         'Área construída é estimativa', 'Pavimentos (estimados)', 'Altura (m)', 'Alertas'],
       lotes.map(l => { const q = l.properties; return [q.sql, q.end, p.zona, q.uso, q.at, q.ag, q.ac,
-        q.p ? 'sim' : '', q.pav ?? '', q.h != null ? String(q.h).replace('.', ',') : '', rotLote(q)]; }));
+        q.p ? 'sim' : '', q.pav ?? '', q.h != null ? virg(q.h) : '', rotLote(q)]; }));
     $$('table.lotes tr[data-sql]').forEach(tr => tr.onclick = () => destacarLote(lotes, tr.dataset.sql));
   }
 }
@@ -562,7 +568,7 @@ function sincronizarControles() {
   $('#o-predio').textContent = est.predio <= 0 ? 'sem prédios' : `até ${String(est.predio).replace('.', ',')}×`;
   $('#f-vila').checked = est.vila; $('#f-sem-alerta').checked = est.semAlerta;
   $('#so-tela').checked = est.soTela; $('#ordem').value = est.ordem;
-  $('#o-area').textContent = fmt(est.area); $('#o-forma').textContent = est.forma;
+  $('#o-area').textContent = `${fmt(est.area)} m²`; $('#o-forma').textContent = est.forma || 'qualquer';
   $('#o-nmax').textContent = est.nmax >= NMAX_SEM_LIMITE ? 'sem limite' : est.nmax;
   $('#o-est').textContent = est.est >= EST_SEM_LIMITE ? 'sem limite' : `${fmt(est.est)} m`;
   $$('#modo-cor button').forEach(b => b.classList.toggle('ativa', b.dataset.modo === est.modo));
@@ -642,20 +648,8 @@ function ligarInterface() {
         p.est, p.est_m, String(p.lat).replace('.', ','), String(p.lon).replace('.', ','),
         `${location.origin}${location.pathname}#m=${p.zona}~${p.id}`]; }));
   };
-  $('#btn-criterios').onclick = () => $('#criterios').showModal();
-  $('#criterios').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   $('#alternar').onclick = () => document.getElementById('app').classList.toggle('aberto');
-  window.addEventListener('keydown', e => { if (e.key === 'Escape' && selecionada && !$('#criterios').open) fecharDetalhe(); });
-}
-
-function preencherCriterios() {
-  const p = meta.parametros, pct = v => Math.round(v * 100);
-  const v = { ca: String(p.ca_max_casa).replace('.', ','), divisa: p.divisa_min, amin: fmt(p.area_min),
-    'p-ret': pct(p.pesos.ret), 'p-miolo': pct(p.pesos.miolo), 'p-comp': pct(p.pesos.comp), 'p-vert': pct(p.pesos.vert),
-    largura: p.raio_miolo * 2, vi: p.vert_ideal, vr: p.vert_ruim, fsp: pct(p.forma_sem_penalidade),
-    hpav: String(meta.regua_predios.altura_pavimento).replace('.', ',') };
-  $$('[data-p]').forEach(s => s.textContent = v[s.dataset.p]);
-  $('#meta-rodape').textContent = `${fmt(meta.lotes_analisados)} lotes analisados · ${fmt(meta.lotes_elegiveis)} elegíveis · ${fmt(meta.manchas)} manchas em ${meta.zonas.length} zoneamentos. Fonte: ${meta.fonte}.`;
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && selecionada) fecharDetalhe(); });
 }
 
 /* ------------------------------------------------------------------- hash */

@@ -4,107 +4,89 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Radar de Terrenos — São Paulo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
 <div id="app">
+  <div id="mapa"></div>
+
   <aside id="painel">
     <header>
+      <span class="logo" aria-hidden="true"></span>
       <div class="marca">
-        <span class="logo" aria-hidden="true"></span>
-        <div>
-          <h1>Radar de Terrenos</h1>
-          <p id="subtitulo">São Paulo · carregando dados…</p>
-        </div>
+        <h1>Radar de Terrenos</h1>
+        <p id="subtitulo">carregando…</p>
       </div>
-      <button id="btn-criterios" class="link" type="button">Como funciona</button>
+      <nav id="abas" role="tablist">
+        <button role="tab" data-aba="lista" class="ativa" type="button">Lista</button>
+        <button role="tab" data-aba="filtros" type="button">Filtros</button>
+      </nav>
     </header>
 
-    <div id="abas" role="tablist">
-      <button role="tab" data-aba="lista" class="ativa" type="button">Oportunidades</button>
-      <button role="tab" data-aba="filtros" type="button">Filtros e camadas</button>
-    </div>
-
     <section id="aba-lista" class="aba">
-      <div class="busca">
-        <input id="busca" type="search" placeholder="Buscar rua, distrito ou setor-quadra…" autocomplete="off">
-      </div>
-      <details id="zonas-caixa">
-        <summary><span class="rot">Zoneamentos</span><span id="zonas-resumo">—</span></summary>
-        <div id="zonas-lista"></div>
-        <div class="zonas-pe"><span>Marque para ver as manchas daquele zoneamento.</span>
-          <button id="zonas-padrao" class="link" type="button">Voltar ao padrão</button></div>
-      </details>
-      <div class="legenda" id="legenda"></div>
-      <div class="barra-lista">
-        <span id="contagem">—</span>
-        <button id="btn-csv" class="link" type="button" title="Exporta todas as manchas que passam nos filtros">Exportar CSV</button>
-      </div>
-      <div class="barra-lista ordem">
-        <label class="mini">Ordenar
-          <select id="ordem">
-            <option value="area">maior área</option>
-            <option value="forma">melhor forma</option>
-            <option value="lote">maiores lotes (menos donos)</option>
-            <option value="metro">mais perto de metrô/trem</option>
-          </select></label>
-        <label class="mini"><input type="checkbox" id="so-tela" checked> só na tela</label>
+      <div class="topo-lista">
+        <input id="busca" type="search" placeholder="Buscar rua, distrito ou quadra" autocomplete="off">
+        <details id="zonas-caixa">
+          <summary><span id="zonas-resumo"></span></summary>
+          <div id="zonas-lista"></div>
+          <button id="zonas-padrao" class="link" type="button">Voltar ao padrão</button>
+        </details>
+        <div class="legenda" id="legenda"></div>
+        <div class="barra-lista">
+          <span id="contagem">—</span>
+          <select id="ordem" aria-label="Ordenar">
+            <option value="area">Maior área</option>
+            <option value="forma">Melhor forma</option>
+            <option value="lote">Menos donos</option>
+            <option value="metro">Perto do metrô</option>
+          </select>
+        </div>
       </div>
       <ol id="lista"></ol>
+      <footer class="pe-lista">
+        <label class="chave"><input type="checkbox" id="so-tela" checked><span></span>Só o que está na tela</label>
+        <button id="btn-csv" class="link" type="button">Exportar CSV</button>
+      </footer>
     </section>
 
     <section id="aba-filtros" class="aba" hidden>
-      <h2>Cor das manchas</h2>
+      <h2>Manchas</h2>
+      <label class="campo"><span>Área mínima</span><output id="o-area"></output>
+        <input type="range" id="f-area" min="2500" max="15000" step="250" value="2500"></label>
+      <label class="campo"><span>Forma mínima</span><output id="o-forma"></output>
+        <input type="range" id="f-forma" min="0" max="100" step="5" value="0"></label>
+      <label class="campo"><span>Máximo de lotes</span><output id="o-nmax"></output>
+        <input type="range" id="f-nmax" min="1" max="61" step="1" value="61"></label>
+      <label class="campo"><span>Distância do metrô/trem</span><output id="o-est"></output>
+        <input type="range" id="f-est" min="200" max="2100" step="100" value="2100"></label>
+      <label class="campo"><span>Máximo não residencial</span><output id="o-pnr"></output>
+        <input type="range" id="f-pnr" min="0" max="100" step="10" value="50"></label>
+      <label class="campo"><span>CA máximo dos prédios</span><output id="o-predio"></output>
+        <input type="range" id="f-predio" min="0" max="4" step="0.5" value="4"></label>
+      <label class="chave"><input type="checkbox" id="f-vila"><span></span>Só com vila</label>
+      <label class="chave"><input type="checkbox" id="f-sem-alerta"><span></span>Só sem alertas</label>
+
+      <h2>Cor</h2>
       <div class="segmento" id="modo-cor">
-        <button type="button" data-modo="faixa" class="ativa" title="Área × fator de forma">Potencial (área + forma)</button>
-        <button type="button" data-modo="faixa_area" title="Somente a área somada dos lotes">Só área</button>
+        <button type="button" data-modo="faixa" class="ativa">Área + forma</button>
+        <button type="button" data-modo="faixa_area">Só área</button>
       </div>
 
-      <h2>Filtros</h2>
-      <label class="campo">Área mínima da mancha
-        <span class="valor"><output id="o-area"></output> m²</span>
-        <input type="range" id="f-area" min="2500" max="15000" step="250" value="2500">
-      </label>
-      <label class="campo">Nota de forma mínima
-        <span class="valor"><output id="o-forma"></output> / 100</span>
-        <input type="range" id="f-forma" min="0" max="100" step="5" value="0">
-      </label>
-      <label class="campo">Nº máximo de lotes a negociar
-        <span class="valor"><output id="o-nmax"></output></span>
-        <input type="range" id="f-nmax" min="1" max="61" step="1" value="61">
-      </label>
-      <label class="campo">Distância máxima de metrô/trem
-        <span class="valor"><output id="o-est"></output></span>
-        <input type="range" id="f-est" min="200" max="2100" step="100" value="2100">
-      </label>
-      <label class="campo">Máx. da área em imóveis não residenciais
-        <span class="valor"><output id="o-pnr"></output></span>
-        <input type="range" id="f-pnr" min="0" max="100" step="10" value="50">
-        <small class="ajuda">Galpões, comércios, escolas etc. Em 50% ficam as manchas formadas principalmente por casas e terrenos.</small>
-      </label>
-      <label class="campo">CA máximo dos prédios que entram na mancha
-        <span class="valor"><output id="o-predio"></output></span>
-        <input type="range" id="f-predio" min="0" max="4" step="0.5" value="4">
-        <small class="ajuda">Prédio = lote em condomínio (“CD”). O CA é a área construída estimada pela volumetria ÷ terreno. Em zero, só casas.</small>
-      </label>
-      <div class="checks">
-        <label><input type="checkbox" id="f-vila"> Somente manchas que incluem vila</label>
-        <label><input type="checkbox" id="f-sem-alerta"> Ocultar manchas com algum alerta</label>
-      </div>
-
-      <h2>Camadas</h2>
+      <h2>Mapa</h2>
       <div class="segmento" id="base">
-        <button type="button" data-base="mapa" class="ativa">Mapa</button>
+        <button type="button" data-base="mapa" class="ativa">Ruas</button>
         <button type="button" data-base="satelite">Satélite</button>
       </div>
-      <div class="checks">
-        <label><input type="checkbox" data-camada="zonas" checked> <i class="am zeu"></i><i class="am zc"></i> Perímetro dos zoneamentos marcados</label>
-        <label><input type="checkbox" data-camada="tombados" checked> <i class="am tomb"></i> Bens tombados</label>
-        <label><input type="checkbox" data-camada="restricoes"> <i class="am env"></i> Restrições que excluem lotes <small>(envoltória, área cedida, CAP, DZ, DG, CJ)</small></label>
-        <label><input type="checkbox" data-camada="alertas"> <i class="am alr"></i> Alertas <small>(melhoramento, desapropriação, contaminação, geotécnica I, PS)</small></label>
-        <label><input type="checkbox" data-camada="estacoes" checked> <i class="am est"></i> Estações de metrô e trem</label>
-      </div>
+      <label class="chave"><input type="checkbox" data-camada="zonas" checked><span></span>Zoneamento</label>
+      <label class="chave"><input type="checkbox" data-camada="tombados" checked><span></span>Bens tombados</label>
+      <label class="chave"><input type="checkbox" data-camada="restricoes"><span></span>Restrições</label>
+      <label class="chave"><input type="checkbox" data-camada="alertas"><span></span>Alertas</label>
+      <label class="chave"><input type="checkbox" data-camada="estacoes" checked><span></span>Metrô e trem</label>
+
       <button id="btn-limpar" class="secundario" type="button">Restaurar filtros</button>
     </section>
 
@@ -112,44 +94,8 @@
   </aside>
 
   <button id="alternar" type="button" aria-label="Mostrar ou ocultar painel">☰</button>
-  <div id="mapa"></div>
   <div id="aviso" hidden></div>
 </div>
-
-<dialog id="criterios">
-  <form method="dialog"><button class="fechar" aria-label="Fechar">×</button></form>
-  <h2>Como o radar funciona</h2>
-  <ol>
-    <li><b>Lotes elegíveis.</b> Lotes fiscais do GeoSampa fora de condomínio (os “CD”), com
-      <b>área construída ÷ área do terreno ≤ <span data-p="ca"></span></b> (acima disso é tratado como prédio),
-      <b>não tombados</b>, <b>fora de área envoltória</b> e não atingidos por área cedida, cadastro de área pública (CAP),
-      diretriz (DZ), desmembramento de gleba (DG) ou conjunto (CJ).</li>
-    <li><b>Manchas.</b> Lotes elegíveis vizinhos (divisa comum de pelo menos <span data-p="divisa"></span> m) e
-      <b>do mesmo zoneamento</b> (Lei 18.177/24) são somados. A mancha aparece quando a soma chega a
-      <b><span data-p="amin"></span> m²</b>. Na caixa “Zoneamentos” você escolhe quais ver.
-      <b>Vilas:</b> a passagem de vila (lote “V”) entra como elo — une as casas dos dois lados e soma área, sem contar como lote a negociar.</li>
-    <li><b>Prédios.</b> Lotes em condomínio (“CD”) entram na mancha quando a <b>área construída estimada ÷ terreno</b> é menor ou
-      igual à régua “CA máximo dos prédios” (aba Filtros). Como o cadastro público não traz a área construída dos condomínios,
-      ela é estimada pela volumetria: projeção de cada volume × pavimentos (altura ÷ <span data-p="hpav"></span> m).
-      Subsolos não contam, e o levantamento de alturas é de 2014 — prédios mais novos podem estar errados ou ausentes.</li>
-    <li><b>Nota de forma (0–100).</b> Média ponderada de quatro medidas do terreno unificado:
-      <ul>
-        <li><b>Retangularidade</b> (<span data-p="p-ret"></span>%) — quanto do menor retângulo envolvente o terreno preenche.</li>
-        <li><b>Miolo aproveitável</b> (<span data-p="p-miolo"></span>%) — parcela da área com pelo menos <span data-p="largura"></span> m de largura; “dentes” e corredores estreitos não contam.</li>
-        <li><b>Perímetro × área</b> (<span data-p="p-comp"></span>%) — perímetro de um quadrado de mesma área ÷ perímetro real.</li>
-        <li><b>Vértices</b> (<span data-p="p-vert"></span>%) — nota máxima até <span data-p="vi"></span> vértices, caindo a zero em <span data-p="vr"></span>.</li>
-      </ul></li>
-    <li><b>Cor.</b> Área equivalente = área × fator de forma (nota ≥ <span data-p="fsp"></span> não desconta nada; abaixo disso desconta proporcionalmente).
-      <span class="tag t1">≥ 2.500 m²</span> <span class="tag t2">≥ 4.000 m²</span> <span class="tag t3">≥ 6.000 m²</span>
-      <span class="tag t0">área ≥ 2.500 m², mas a forma derruba</span></li>
-  </ol>
-  <p class="nota"><b>Alertas</b> não tiram a mancha do mapa, mas aparecem ao passar o mouse e na ficha: lote atingido por
-    melhoramento viário, desapropriação (DUP/DIS), unidade geotécnica I da carta de 2024, área contaminada ou com
-    potencial de contaminação, ou parcelamento aprovado como Passagem – PS.
-    A área usada é a do desenho do lote no GeoSampa; a área do IPTU aparece ao lado para conferência.
-    É uma triagem: confirme matrícula, zoneamento e restrições antes de avançar.</p>
-  <p class="nota" id="meta-rodape"></p>
-</dialog>
 
 <script src="vendor/maplibre-gl.js"></script>
 <script src="app.js"></script>
