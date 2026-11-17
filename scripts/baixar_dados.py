@@ -132,6 +132,24 @@ LICENCIAMENTOS = {
 }
 
 
+# Metrô e trem: linhas (atuais e projetadas) e estações projetadas.
+# As estações atuais já vêm em baixar_apoio (estacao_metro, estacao_trem).
+METRO = {
+    "linha_metro": "linha_metro",
+    "linha_metro_projetada": "linha_metro_projetada",
+    "linha_trem": "linha_trem",
+    "linha_trem_projetada": "linha_trem_projetada",
+    "estacao_metro_projetada": "estacao_metro_projetada",
+    "estacao_trem_projetada": "estacao_trem_projetada",
+}
+
+
+def baixar_metro():
+    print("Metrô e trem…")
+    for nome, camada in METRO.items():
+        salvar(f"{nome}.json", baixar_camada(camada, ordenar=None))
+
+
 def baixar_equipamentos():
     print("Equipamentos e licenciamentos…")
     for nome, camada in {**EQUIPAMENTOS, **LICENCIAMENTOS}.items():
@@ -148,6 +166,8 @@ def main():
     os.makedirs(BRUTOS, exist_ok=True)
     if "--so-apoio" in sys.argv:
         return baixar_apoio()
+    if "--so-metro" in sys.argv:
+        return baixar_metro()
     if "--so-equipamentos" in sys.argv:
         salvar("operacao_urbana.json", baixar_camada("operacao_urbana", ordenar=None))
         return baixar_equipamentos()
@@ -163,6 +183,7 @@ def main():
                baixar_camada(f"patrimonio_cultural_area_envoltoria_{org}"))
     baixar_restricoes()
     baixar_equipamentos()
+    baixar_metro()
     baixar_apoio()
 
     if "--sem-lotes" in sys.argv:

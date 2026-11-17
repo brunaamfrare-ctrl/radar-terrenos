@@ -25,6 +25,9 @@ Regras (premissas de novos negócios):
      área estimada / terreno <= valor da régua do mapa (0 a CA_MAX_PREDIO, de
      PASSO_CA em PASSO_CA). As manchas são calculadas para cada posição da régua;
      cada uma guarda a faixa da régua em que existe (propriedades "na" e "nb").
+  8. Metrô e trem (linhas e estações, atuais e projetados): sai o lote que uma
+     linha atravessa ou que contém uma estação; fica, com alerta, o lote a até
+     METRO_DIST_ALERTA m de uma linha ou estação.
   6. Alertas (não excluem): melhoramento viário, desapropriação (DUP/DIS),
      unidade geotécnica I, área contaminada ou com potencial de contaminação,
      Passagem - PS (parcelamento aprovado como passagem; cobre vilas inteiras).
@@ -107,6 +110,16 @@ SQL_DO_REGISTRO = {
 }
 # Camadas em que o lote só sai se estiver DENTRO (metade ou mais da área)
 RESTRICOES_DENTRO = {"operacao_urbana": "operação urbana"}
+
+# Metrô e trem (atuais "mt" e projetados "mf"): o lote que a linha atravessa sai;
+# o lote a até METRO_DIST_ALERTA m de uma linha ou estação fica, com alerta.
+METRO_DIST_ALERTA = 20.0
+METRO_SOB_MIN = 1.0       # m de linha dentro do lote (miolo) para valer como "passa por baixo"
+METRO_LINHAS = {"linha_metro": "mt", "linha_trem": "mt",
+                "linha_metro_projetada": "mf", "linha_trem_projetada": "mf"}
+METRO_ESTACOES = {"estacao_metro": "mt", "estacao_trem": "mt",
+                  "estacao_metro_projetada": "mf", "estacao_trem_projetada": "mf"}
+METRO_ROTULO = {"mt": "metrô/trem atual", "mf": "metrô/trem projetado"}
 
 ZONAS_FORA = {"Praça/Canteiro", "VETADO"}       # não são zonas de uso
 ZONAS_PADRAO = ["ZEU", "ZC", "ZEIS-5", "ZEM"]   # marcadas ao abrir o mapa
@@ -239,6 +252,47 @@ def atingidos(geoms, idx, camada):
     return {idx[l]: quem[l][1] for l, a in soma.items()
             if a >= min(IMPACTO_AREA, IMPACTO_FRACAO * area_lote[l])
             and (l in corpo or a >= 0.5 * area_lote[l])}
+
+
+def metro_geoms():
+    """Linhas e estações de metrô/trem: {"mt": {"linhas", "pontos"}, "mf": {...}}."""
+    out = {"mt": {"linhas": [], "pontos": []}, "mf": {"linhas": [], "pontos": []}}
+    for nome, cod in METRO_LINHAS.items():
+        out[cod]["linhas"].extend(carregar(nome + ".json")[0])
+    for nome, cod in METRO_ESTACOES.items():
+        out[cod]["pontos"].extend(carregar(nome + ".json")[0])
+    return {c: {k: np.array(v, dtype=object) for k, v in d.items()} for c, d in out.items()}
+
+
+def metro_sob(geoms, idx, m):
+    """Índices dos lotes de idx que têm linha passando por baixo ou estação dentro."""
+    achados = set()
+    if len(m["linhas"]):
+        trechos, _ = subdividir(m["linhas"], max_coords=300, lado_min=40.0)
+        li, ci = STRtree(trechos).query(geoms[idx], predicate="intersects")
+        if len(li):
+            miolo = shapely.buffer(geoms[idx][li], -0.3)      # ignora linha só encostada na divisa
+            comp = shapely.length(shapely.intersection(miolo, trechos[ci]))
+            soma = np.zeros(len(idx))
+            np.add.at(soma, li, comp)
+            achados.update(idx[np.flatnonzero(soma >= METRO_SOB_MIN)].tolist())
+    if len(m["pontos"]):
+        li, _ = STRtree(m["pontos"]).query(geoms[idx], predicate="contains")
+        achados.update(idx[np.unique(li)].tolist())
+    return achados
+
+
+def metro_perto(geoms, idx, m, dist):
+    """Índices dos lotes de idx a até dist metros de uma linha ou estação."""
+    achados = set()
+    if len(m["linhas"]):
+        trechos, _ = subdividir(m["linhas"], max_coords=300, lado_min=40.0)
+        li, _ = STRtree(trechos).query(geoms[idx], predicate="dwithin", distance=dist)
+        achados.update(idx[np.unique(li)].tolist())
+    if len(m["pontos"]):
+        li, _ = STRtree(m["pontos"]).query(geoms[idx], predicate="dwithin", distance=dist)
+        achados.update(idx[np.unique(li)].tolist())
+    return achados
 
 
 def nome_arquivo(zona):
@@ -411,6 +465,16 @@ def main():
             ok[idx[l]] = False
             motivo[rotulo] += 1
 
+    # ---------------------------------- metrô e trem sob o lote (excluem)
+    metro = metro_geoms()
+    for cod in ("mt", "mf"):
+        idx = np.flatnonzero(ok)
+        for i in metro_sob(geoms, idx, metro[cod]):
+            ok[i] = False
+            motivo[f"{METRO_ROTULO[cod]} sob o lote"] += 1
+    camadas_restr["metro_mt"] = shapely.buffer(metro["mt"]["linhas"], 3.0)
+    camadas_restr["metro_mf"] = shapely.buffer(metro["mf"]["linhas"], 3.0)
+
     # ------------------------------------------ duplicatas sobrepostas
     idx = np.flatnonzero(ok)
     g = geoms[idx]
@@ -446,6 +510,16 @@ def main():
             elif cod == "cp" and i not in detalhe_cont:
                 detalhe_cont[i] = (cp[k].get("dc_tipo_situacao") or "").strip().capitalize()
         log(f"  {camada}: {len(hits)} lotes")
+
+    for cod in ("mt", "mf"):                    # metrô/trem a até METRO_DIST_ALERTA m
+        idx = np.flatnonzero(ok)
+        hits = metro_perto(geoms, idx, metro[cod], METRO_DIST_ALERTA)
+        for i in hits:
+            alerta[i].append(cod)
+        log(f"  {METRO_ROTULO[cod]} a até {METRO_DIST_ALERTA:.0f} m: {len(hits)} lotes")
+        zona_m = shapely.union_all(np.concatenate([shapely.buffer(metro[cod]["linhas"], METRO_DIST_ALERTA),
+                                                   shapely.buffer(metro[cod]["pontos"], METRO_DIST_ALERTA)]))
+        camadas_alerta[cod] = np.array([zona_m], dtype=object)
 
     # ------------------------------------------------------- contiguidade
     log("Calculando contiguidade…")
@@ -689,6 +763,10 @@ def main():
                ('{"type":"FeatureCollection","features":[' + ",".join(partes) + "]}").encode())
 
     # ---------------------------------------------------- camadas de apoio
+    ROTULO_RESTR = {**RESTRICOES, **RESTRICOES_DENTRO,
+                    "metro_mt": "metrô/trem (linha sob o lote)",
+                    "metro_mf": "metrô/trem projetado (linha sob o lote)"}
+
     def feicoes(pares):
         """[(geometria, propriedades)] -> feições GeoJSON, pulando geometrias vazias."""
         saida = []
@@ -707,10 +785,10 @@ def main():
                            "sit": (p["tx_situacao_tombamento"] or "").strip()})
         for x, p in zip(tg, tp))})
     gravar("restricoes.geojson.gz", {"type": "FeatureCollection", "features": feicoes(
-        (x.simplify(1.0), {"t": {**RESTRICOES, **RESTRICOES_DENTRO}[camada]})
+        (x.simplify(1.0), {"t": ROTULO_RESTR[camada]})
         for camada, cg in camadas_restr.items() for x in cg)})
     gravar("alertas.geojson.gz", {"type": "FeatureCollection", "features": feicoes(
-        (x.simplify(1.5 if cod != "g1" else 5.0), {"t": cod})
+        (x.simplify({"g1": 5.0, "mt": 3.0, "mf": 3.0}.get(cod, 1.5)), {"t": cod})
         for cod, cg in camadas_alerta.items() for x in cg)})
     gravar("estacoes.geojson", {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": wgs(x), "properties": {"nome": n}}

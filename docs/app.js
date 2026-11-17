@@ -15,6 +15,8 @@ const ALERTAS = {
   cs: 'Área contaminada ou reabilitada',
   cp: 'Potencial ou suspeita de contaminação',
   ps: 'Passagem – PS (parcelamento de vila)',
+  mt: 'Metrô/trem a até 20 m',
+  mf: 'Linha projetada a até 20 m',
 };
 const COR_ZONA = { ZEU: '#7c4dcc', ZC: '#1d84c9', 'ZEIS-5': '#0f9b8e', ZEM: '#d6409f' };
 const PALETA = ['#b45309', '#4d7c0f', '#be123c', '#0369a1', '#7e22ce', '#a16207', '#15803d', '#9f1239', '#475569', '#c2410c'];
