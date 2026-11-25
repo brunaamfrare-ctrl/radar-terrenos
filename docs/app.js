@@ -25,6 +25,8 @@ const PADRAO = { modo: 'faixa', area: 2500, forma: 0, nmax: 61, est: 2100, pnr: 
 const ZOOM_LOTES = 15;
 const NMAX_SEM_LIMITE = 61, EST_SEM_LIMITE = 2100;
 const CHAVE_ZONAS = 'radar-terrenos.zonas';
+const CHAVE_AREAS = 'radar-terrenos.areas.v1';
+const CORES_AREA = ['#7c3aed', '#0891b2', '#ea580c', '#059669', '#db2777', '#65a30d', '#2563eb', '#ca8a04'];
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -32,6 +34,7 @@ const fmt = n => Math.round(n).toLocaleString('pt-BR');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const plural = (n, s, p) => `${fmt(n)} ${n === 1 ? s : p}`;
+const virg = v => String(v).replace('.', ',');
 const ABREV = { R: 'R.', AV: 'Av.', AL: 'Al.', TV: 'Tv.', PC: 'Pç.', PCA: 'Pç.', ES: 'Estr.', EST: 'Estr.', VD: 'Vd.', LG: 'Lgo.',
   ROD: 'Rod.', PQ: 'Pq.', PSG: 'Psg.', VE: 'Viela', LD: 'Ld.', DR: 'Dr.', PROF: 'Prof.', ENG: 'Eng.', CEL: 'Cel.', GAL: 'Gal.',
   PDE: 'Pe.', CAP: 'Cap.', MAL: 'Mal.', DES: 'Des.', SEN: 'Sen.', DEP: 'Dep.', MIN: 'Min.', STA: 'Sta.', STO: 'Sto.', S: 'S.',
@@ -54,6 +57,10 @@ const cacheManchas = new Map();      // código -> Promise<feições>
 const cacheZonas = new Map();        // código -> Promise<feição do perímetro>
 const cacheLotes = new Map();        // "ZONA/célula" -> Promise<feições>
 let CEL = 0.01;
+let areas = [];                              // áreas salvas (ficam no navegador)
+const formar = { ativo: false, editando: null, lotes: new Map() };   // sql -> feição do lote
+const lotesVisiveis = new Map();             // lotes desenhados agora (sql -> feição inteira)
+let dicaGlobal = null;
 
 /* ------------------------------------------------------------------ mapa */
 const bases = {
@@ -84,7 +91,9 @@ map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), 't
 map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 map.addControl(new maplibregl.AttributionControl({ compact: true,
   customAttribution: 'Lotes, zoneamento e restrições: <a href="https://geosampa.prefeitura.sp.gov.br" target="_blank" rel="noopener">GeoSampa / PMSP</a>' }), 'bottom-right');
+window.__radar = { map };
 map.dragRotate.disable();
+map.boxZoom.disable();                 // Shift+clique é usado para pegar a mancha inteira
 map.touchZoomRotate.disableRotation();
 
 const fc = feats => ({ type: 'FeatureCollection', features: feats || [] });
@@ -153,7 +162,7 @@ map.on('load', async () => {
     zonaInfo.set(z.cod, { ...z, celulas: new Set(z.celulas), cor: COR_ZONA[z.cod] || PALETA[n++ % PALETA.length] });
   }
 
-  for (const s of ['zonas', 'tombados', 'restricoes', 'alertas', 'estacoes', 'pontos', 'lotes', 'selecao', 'lote-sel']) {
+  for (const s of ['zonas', 'tombados', 'restricoes', 'alertas', 'estacoes', 'pontos', 'lotes', 'selecao', 'lote-sel', 'areas', 'formando']) {
     map.addSource(s, { type: 'geojson', data: fc() });
   }
   map.addSource('manchas', { type: 'geojson', data: fc(), promoteId: 'id' });
@@ -191,6 +200,12 @@ map.on('load', async () => {
     paint: { 'fill-color': '#9aa1ab', 'fill-opacity': 0.55 } });
   map.addLayer({ id: 'tombados-line', type: 'line', source: 'tombados', minzoom: 13,
     paint: { 'line-color': '#6b7280', 'line-width': 0.7 } });
+  map.addLayer({ id: 'areas-fill', type: 'fill', source: 'areas', paint: { 'fill-color': ['get', 'cor'], 'fill-opacity': 0.5 } });
+  map.addLayer({ id: 'areas-line', type: 'line', source: 'areas',
+    paint: { 'line-color': ['get', 'cor'], 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 1.2, 18, 3] } });
+  map.addLayer({ id: 'formando-fill', type: 'fill', source: 'formando', paint: { 'fill-color': '#6d28d9', 'fill-opacity': 0.62 } });
+  map.addLayer({ id: 'formando-line', type: 'line', source: 'formando',
+    paint: { 'line-color': '#2e1065', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 1.5, 18, 3.2] } });
   map.addLayer({ id: 'pontos', type: 'circle', source: 'pontos', maxzoom: 12.5,
     layout: { 'circle-sort-key': ['get', 'area_eq'] },
     paint: { 'circle-color': exprCor(), 'circle-stroke-color': '#fff', 'circle-stroke-width': 0.6,
@@ -218,6 +233,7 @@ map.on('load', async () => {
 
   ligarInterface();
   interacoes();
+  ligarAreas();
   await trocarZonas();
   map.on('moveend', () => { atualizarLista(); carregarLotes(); gravarHash(); });
   if (idLink && porId.has(idLink)) selecionar(idLink, true);
@@ -396,6 +412,8 @@ async function desenharLotes() {
     vistos.add(l.properties.sql);
     return true;
   });
+  lotesVisiveis.clear();
+  for (const l of feats) lotesVisiveis.set(l.properties.sql, l);
   map.getSource('lotes').setData(fc(feats));
 }
 
@@ -413,12 +431,15 @@ function dicaMancha(p) {
 
 function interacoes() {
   const dica = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dica', offset: 12, maxWidth: '300px' });
+  dicaGlobal = dica;
   let hoverId = null;
   const soltar = () => {
     if (hoverId !== null) map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: false });
     hoverId = null;
   };
   map.on('mousemove', 'manchas-fill', e => {
+    if (formar.ativo) return;
+    if (map.queryRenderedFeatures(e.point, { layers: ['areas-fill'] }).length) return;
     const p = e.features[0].properties;
     if (hoverId !== p.id) {
       soltar(); hoverId = p.id;
@@ -434,13 +455,31 @@ function interacoes() {
     ['tombados-fill', p => `<b>Bem tombado</b><br>${esc(p.nome)}${p.sit && p.sit !== 'TOMBADO' ? ' (' + esc(p.sit) + ')' : ''}`],
     ['restricoes-fill', rotRestr], ['alertas-fill', p => `<b>Alerta</b><br>${esc(ALERTAS[p.t] || p.t)}`]]) {
     map.on('mousemove', camada, e => {
+      if (formar.ativo) return;
       if (camada !== 'pontos' && map.queryRenderedFeatures(e.point, { layers: ['manchas-fill'] }).length) return;
       map.getCanvas().style.cursor = camada === 'pontos' ? 'pointer' : '';
       dica.setLngLat(e.lngLat).setHTML(rot(e.features[0].properties)).addTo(map);
     });
     map.on('mouseleave', camada, () => { dica.remove(); map.getCanvas().style.cursor = ''; });
   }
+  map.on('mousemove', 'areas-fill', e => {
+    if (formar.ativo) return;
+    const a = areas.find(x => x.id === e.features[0].properties.aid);
+    if (a) dica.setLngLat(e.lngLat).setHTML(dicaArea(a)).addTo(map);
+  });
+  map.on('mouseleave', 'areas-fill', () => { if (!formar.ativo) dica.remove(); });
+  const dicaLote = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dica', offset: 10, maxWidth: '280px' });
+  map.on('mousemove', 'lotes-fill', e => {
+    if (!formar.ativo) return;
+    const p = e.features[0].properties;
+    const dentro = formar.lotes.has(p.sql);
+    dicaLote.setLngLat(e.lngLat).setHTML(`<b>${esc(p.v ? 'Passagem de vila' : nomeProprio(p.end) || p.sql)}</b><br>
+      terreno ${fmt(p.at || p.ag)} m² · constr. ${p.p ? '~' : ''}${fmt(p.ac)} m²<br>
+      <span class="sec">${dentro ? '✓ na seleção · clique para tirar' : 'clique para somar'}</span>`).addTo(map);
+  });
+  map.on('mouseleave', 'lotes-fill', () => dicaLote.remove());
   map.on('click', e => {
+    if (formar.ativo) return clicarLote(e);
     const f = map.queryRenderedFeatures(e.point, { layers: ['manchas-fill', 'pontos'] })[0];
     if (!f) return;
     const l = map.getZoom() >= ZOOM_LOTES ? map.queryRenderedFeatures(e.point, { layers: ['lotes-fill'] })[0] : null;
@@ -633,9 +672,7 @@ function ligarInterface() {
   $('#btn-limpar').onclick = () => { est = structuredClone(PADRAO); $('#busca').value = ''; sincronizarControles(); aplicar(); };
   $('#abas').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    $$('#abas button').forEach(x => x.classList.toggle('ativa', x === b));
-    $('#aba-lista').hidden = b.dataset.aba !== 'lista';
-    $('#aba-filtros').hidden = b.dataset.aba !== 'filtros';
+    abrirAba(b.dataset.aba);
   });
   $('#lista').addEventListener('click', e => {
     const li = e.target.closest('li[data-id]'); if (li) selecionar(li.dataset.id);
@@ -654,7 +691,267 @@ function ligarInterface() {
         `${location.origin}${location.pathname}#m=${p.zona}~${p.id}`]; }));
   };
   $('#alternar').onclick = () => document.getElementById('app').classList.toggle('aberto');
-  window.addEventListener('keydown', e => { if (e.key === 'Escape' && selecionada) fecharDetalhe(); });
+  window.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (formar.ativo) sairFormar(); else if (selecionada) fecharDetalhe();
+  });
+}
+
+
+/* ------------------------------------------------------------------ áreas */
+// "Formar área": o usuário soma lotes clicando neles; ao salvar, a demarcação fica no mapa
+// (guardada no navegador) e dá para continuar explorando e formar outras.
+function abrirAba(nome) {
+  $$('#abas button').forEach(x => x.classList.toggle('ativa', x.dataset.aba === nome));
+  for (const a of ['lista', 'filtros', 'areas']) $('#aba-' + a).hidden = a !== nome;
+}
+
+let toastT;
+function avisar(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastT);
+  toastT = setTimeout(() => { t.hidden = true; }, 3400);
+}
+
+function lerAreas() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CHAVE_AREAS));
+    return Array.isArray(v) ? v.filter(a => a && a.id && Array.isArray(a.lotes) && a.lotes.length) : [];
+  } catch { return []; }
+}
+function gravarAreas() {
+  try { localStorage.setItem(CHAVE_AREAS, JSON.stringify(areas)); return true; }
+  catch { avisar('Não deu para salvar: o navegador está sem espaço ou bloqueou o armazenamento.'); return false; }
+}
+
+// soma de um conjunto de lotes (props de cada lote)
+function medir(ps) {
+  const r = { n: 0, vias: 0, ag: 0, at: 0, ac: 0, estima: false, al: {}, quadras: new Set() };
+  for (const p of ps) {
+    r.ag += p.ag || 0;
+    r.quadras.add(p.sql.slice(0, 7));
+    if (p.v) { r.vias++; r.at += p.ag || 0; } else { r.n++; r.at += p.at || p.ag || 0; r.ac += p.ac || 0; }
+    if (p.p) r.estima = true;
+    for (const k of (p.al || '').split(',').filter(Boolean)) r.al[k] = (r.al[k] || 0) + 1;
+  }
+  r.ca = r.at ? r.ac / r.at : 0;
+  return r;
+}
+const alertasDoConjunto = m => Object.entries(m.al).filter(([k]) => ALERTAS[k])
+  .map(([k, n]) => `${ALERTAS[k]} (${plural(n, 'lote', 'lotes')})`);
+
+function caixa(gs) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const g of gs) for (const [x, y] of g[0]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  return [x0, y0, x1, y1];
+}
+function centro(lotes) {
+  let sx = 0, sy = 0, sp = 0;
+  for (const l of lotes) { const [x0, y0, x1, y1] = caixa([l.g]); const w = l.ag || 1; sx += w * (x0 + x1) / 2; sy += w * (y0 + y1) / 2; sp += w; }
+  return [sx / sp, sy / sp];
+}
+function voarPara(lotes) {
+  const [x0, y0, x1, y1] = caixa(lotes.map(l => l.g));
+  const estreito = matchMedia('(max-width: 760px)').matches;
+  map.fitBounds([[x0, y0], [x1, y1]], { padding: estreito ? 50 : { top: 110, bottom: 90, right: 90, left: 470 }, maxZoom: 18, duration: 700 });
+}
+const paraLote = f => ({ ...f.properties, g: f.geometry.coordinates });
+const comoFeicao = l => { const { g, ...props } = l; return { type: 'Feature', geometry: { type: 'Polygon', coordinates: g }, properties: props }; };
+// o que é guardado de cada lote (sem a lista de manchas, que muda com os filtros)
+const LOTE_CAMPOS = ['sql', 'end', 'at', 'ag', 'ac', 'uso', 'p', 'pav', 'h', 'v', 'al', 'cont', 'g'];
+const enxugar = l => Object.fromEntries(LOTE_CAMPOS.filter(k => l[k] !== undefined).map(k => [k, l[k]]));
+
+/* --- formando --- */
+function iniciarFormar(area = null) {
+  formar.ativo = true;
+  formar.editando = area ? area.id : null;
+  formar.lotes = new Map(area ? area.lotes.map(l => [l.sql, comoFeicao(l)]) : []);
+  $('#cf-nome').value = area ? area.nome : '';
+  $('#app').classList.add('formando');
+  $('#btn-formar').hidden = true;
+  $('#card-formar').hidden = false;
+  map.doubleClickZoom.disable();
+  dicaGlobal?.remove();
+  desenharAreas();
+  atualizarFormando();
+  if (area) voarPara(area.lotes);
+}
+function sairFormar() {
+  formar.ativo = false;
+  formar.editando = null;
+  formar.lotes = new Map();
+  $('#app').classList.remove('formando');
+  $('#btn-formar').hidden = false;
+  $('#card-formar').hidden = true;
+  map.doubleClickZoom.enable();
+  map.getSource('formando').setData(fc());
+  desenharAreas();
+}
+function atualizarFormando() {
+  const fs = [...formar.lotes.values()];
+  map.getSource('formando').setData(fc(fs));
+  const m = medir(fs.map(f => f.properties));
+  $('#cf-modo').textContent = formar.editando ? 'Editando área' : 'Formando área';
+  $('#cf-area').textContent = fmt(m.ag);
+  $('#cf-lotes').textContent = fmt(m.n);
+  $('#cf-detalhe').textContent = fs.length
+    ? `IPTU ${fmt(m.at)} m² · construído ${m.estima ? '~' : ''}${fmt(m.ac)} m² · CA ${virg(m.ca.toFixed(2))}` : '';
+  const al = alertasDoConjunto(m);
+  $('#cf-alertas').innerHTML = al.map(t => `<div>⚠ ${esc(t)}</div>`).join('');
+  $('#cf-salvar').disabled = !fs.length;
+  $('#cf-salvar').textContent = formar.editando ? 'Salvar alterações' : 'Salvar área';
+  $('#cf-limpar').disabled = !fs.length;
+  $('#cf-dica').textContent = map.getZoom() < ZOOM_LOTES - 0.5 ? 'Aproxime o mapa para selecionar lotes.'
+    : fs.length ? 'Clique de novo num lote para tirá-lo da soma.' : 'Clique nos lotes para somar. Shift+clique pega a mancha inteira.';
+}
+async function clicarLote(e) {
+  const q = map.queryRenderedFeatures(e.point, { layers: ['lotes-fill'] })[0];
+  if (!q) return;
+  const sql = q.properties.sql;
+  const lote = lotesVisiveis.get(sql) || q;     // a feição do mapa pode vir recortada: prefere a inteira
+  if (e.originalEvent.shiftKey) {                // mancha inteira
+    const m = manchaDoLote(lote);
+    if (!m) return;
+    const todos = (await buscarLotes(`${m.properties.zona}/${m.properties.cel}`))
+      .filter(l => l.properties.m.split(',').includes(m.properties.id));
+    const tudo = todos.every(l => formar.lotes.has(l.properties.sql));
+    for (const l of todos) { if (tudo) formar.lotes.delete(l.properties.sql); else formar.lotes.set(l.properties.sql, l); }
+  } else if (formar.lotes.has(sql)) formar.lotes.delete(sql);
+  else formar.lotes.set(sql, lote);
+  atualizarFormando();
+}
+function salvarArea() {
+  const fs = [...formar.lotes.values()];
+  if (!fs.length) return;
+  const lotes = fs.map(f => enxugar(paraLote(f)));
+  const antiga = formar.editando && areas.find(a => a.id === formar.editando);
+  const nome = $('#cf-nome').value.trim().slice(0, 60) || (antiga ? antiga.nome : `Área ${areas.length + 1}`);
+  const anterior = structuredClone(areas);
+  if (antiga) Object.assign(antiga, { nome, lotes, editada: new Date().toISOString() });
+  else areas.push({ id: Date.now().toString(36), nome, cor: CORES_AREA[areas.length % CORES_AREA.length],
+    criada: new Date().toISOString(), lotes });
+  if (!gravarAreas()) { areas = anterior; return; }
+  const m = medir(lotes);
+  sairFormar();
+  desenharListaAreas();
+  avisar(`“${nome}” salva · ${fmt(m.ag)} m²`);
+}
+
+/* --- áreas salvas --- */
+function dicaArea(a) {
+  const m = medir(a.lotes);
+  const al = alertasDoConjunto(m).map(t => `<div class="al">⚠ ${esc(t)}</div>`).join('');
+  return `<b>${esc(a.nome)}</b><table class="dica-t">
+    <tr><td>Setor · quadra</td><td><b>${esc([...m.quadras].map(q => q).join(' · '))}</b></td></tr>
+    <tr><td>Área total</td><td><b>${fmt(m.ag)} m²</b></td></tr>
+    <tr><td>Área construída</td><td>${m.estima ? '~' : ''}${fmt(m.ac)} m²</td></tr>
+    <tr><td>Lotes</td><td>${m.n}</td></tr></table>${al}`;
+}
+const rotulosArea = [];
+function desenharAreas() {
+  const vis = areas.filter(a => a.id !== formar.editando);
+  map.getSource('areas').setData(fc(vis.flatMap(a => a.lotes.map(l => ({
+    type: 'Feature', geometry: { type: 'Polygon', coordinates: l.g }, properties: { aid: a.id, cor: a.cor, nome: a.nome } })))));
+  for (const mk of rotulosArea.splice(0)) mk.remove();
+  for (const a of vis) {
+    const m = medir(a.lotes);
+    const el = document.createElement('button');
+    el.type = 'button'; el.className = 'area-rotulo';
+    el.innerHTML = `<i style="background:${a.cor}"></i><b>${esc(a.nome)}</b><span>${fmt(m.ag)} m²</span>`;
+    el.onclick = ev => { ev.stopPropagation(); abrirAba('areas'); $(`#areas-lista li[data-id="${a.id}"]`)?.scrollIntoView({ block: 'nearest' }); };
+    rotulosArea.push(new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(centro(a.lotes)).addTo(map));
+  }
+}
+function desenharListaAreas() {
+  $('#aba-areas-btn').textContent = areas.length ? `Áreas · ${areas.length}` : 'Áreas';
+  $('#areas-vazio').hidden = areas.length > 0;
+  $('#areas-rodape').hidden = areas.length === 0;
+  $('#areas-lista').innerHTML = areas.map(a => {
+    const m = medir(a.lotes), al = alertasDoConjunto(m);
+    return `<li data-id="${esc(a.id)}">
+      <span class="ponto" style="background:${a.cor}"></span>
+      <span class="corpo"><b class="nome">${esc(a.nome)}</b>
+        <span class="sub">${plural(m.n, 'lote', 'lotes')} · ${esc([...m.quadras].join(' · '))} · construído ${m.estima ? '~' : ''}${fmt(m.ac)} m²</span>
+        ${al.length ? `<span class="sub al">⚠ ${esc(al.join(' · '))}</span>` : ''}</span>
+      <span class="num"><b>${fmt(m.ag)} m²</b><span>IPTU ${fmt(m.at)}</span></span>
+      <span class="acoes-i"><button type="button" data-acao="editar">Editar</button><button type="button" data-acao="excluir">Excluir</button></span>
+    </li>`; }).join('');
+}
+
+function exportarAreasCSV() {
+  baixarCSV('areas.csv', ['Nome', 'Lotes', 'Área (m²)', 'Área IPTU (m²)', 'Área construída (m²)', 'Construída é estimativa', 'CA',
+    'Setor.quadra', 'SQLs', 'Alertas', 'Latitude', 'Longitude', 'Google Maps', 'Criada em'],
+  areas.map(a => {
+    const m = medir(a.lotes), [lon, lat] = centro(a.lotes);
+    return [a.nome, m.n, m.ag, m.at, m.ac, m.estima ? 'sim' : '', virg(m.ca.toFixed(2)), [...m.quadras].join(' | '),
+      a.lotes.map(l => l.sql).join(' | '), alertasDoConjunto(m).join(' | '), virg(lat.toFixed(6)), virg(lon.toFixed(6)),
+      `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}`, (a.criada || '').slice(0, 10)];
+  }));
+}
+function exportarBackup() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ versao: 1, areas }, null, 1)], { type: 'application/json' }));
+  a.download = `radar-areas-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const numero = v => (Number.isFinite(+v) ? +v : 0);
+function limparArea(a) {                       // valida o que vem de um backup
+  const lotes = (Array.isArray(a?.lotes) ? a.lotes : []).filter(l => l && typeof l.sql === 'string'
+    && Array.isArray(l.g) && Array.isArray(l.g[0]) && Array.isArray(l.g[0][0]) && Number.isFinite(+l.g[0][0][0]))
+    .map(l => ({ sql: String(l.sql), end: String(l.end ?? ''), at: numero(l.at), ag: numero(l.ag), ac: numero(l.ac),
+      uso: String(l.uso ?? ''), ...(l.p ? { p: 1, pav: numero(l.pav), h: numero(l.h) } : {}), ...(l.v ? { v: 1 } : {}),
+      ...(l.al ? { al: String(l.al) } : {}), ...(l.cont ? { cont: String(l.cont) } : {}), g: l.g }));
+  if (!a?.id || !lotes.length) return null;
+  return { id: String(a.id).slice(0, 40), nome: String(a.nome ?? 'Área').slice(0, 60),
+    cor: /^#[0-9a-f]{6}$/i.test(a.cor) ? a.cor : CORES_AREA[0], criada: String(a.criada ?? ''), lotes };
+}
+async function importarBackup(arquivo) {
+  try {
+    const dados = JSON.parse(await arquivo.text());
+    const novas = (Array.isArray(dados) ? dados : dados.areas).map(limparArea).filter(Boolean);
+    if (!novas.length) throw new Error('vazio');
+    for (const n of novas) { const i = areas.findIndex(a => a.id === n.id); if (i >= 0) areas[i] = n; else areas.push(n); }
+    if (!gravarAreas()) return;
+    desenharAreas(); desenharListaAreas();
+    avisar(`${plural(novas.length, 'área importada', 'áreas importadas')}`);
+  } catch { avisar('Arquivo inválido: use um backup gerado por esta ferramenta.'); }
+}
+
+function ligarAreas() {
+  areas = lerAreas();
+  desenharAreas();
+  desenharListaAreas();
+  const atualizarRotulos = () => $('#app').classList.toggle('sem-rotulos', map.getZoom() < 13.2);
+  map.on('zoom', atualizarRotulos); atualizarRotulos();
+  map.on('zoomend', () => { if (formar.ativo) atualizarFormando(); });
+  $('#btn-formar').onclick = () => iniciarFormar();
+  $('#cf-cancelar').onclick = sairFormar;
+  $('#cf-limpar').onclick = () => { formar.lotes.clear(); atualizarFormando(); };
+  $('#cf-salvar').onclick = salvarArea;
+  $('#cf-nome').addEventListener('keydown', e => { if (e.key === 'Enter') salvarArea(); });
+  $('#areas-csv').onclick = exportarAreasCSV;
+  $('#areas-backup').onclick = exportarBackup;
+  $('#areas-importar').onclick = () => $('#areas-arquivo').click();
+  $('#areas-arquivo').addEventListener('change', e => { if (e.target.files[0]) importarBackup(e.target.files[0]); e.target.value = ''; });
+  let confirmaT;
+  $('#areas-lista').addEventListener('click', e => {
+    const li = e.target.closest('li[data-id]'); if (!li) return;
+    const a = areas.find(x => x.id === li.dataset.id); if (!a) return;
+    const b = e.target.closest('button[data-acao]');
+    if (!b) return voarPara(a.lotes);
+    if (b.dataset.acao === 'editar') { abrirAba('lista'); return iniciarFormar(a); }
+    if (!b.classList.contains('perigo')) {       // excluir pede uma segunda confirmação
+      b.classList.add('perigo'); b.textContent = 'Confirmar?';
+      clearTimeout(confirmaT);
+      confirmaT = setTimeout(() => { b.classList.remove('perigo'); b.textContent = 'Excluir'; }, 3000);
+      return;
+    }
+    areas = areas.filter(x => x.id !== a.id);
+    gravarAreas(); desenharAreas(); desenharListaAreas();
+    avisar(`“${a.nome}” excluída`);
+  });
 }
 
 /* ------------------------------------------------------------------- hash */

@@ -32,7 +32,7 @@ button { cursor: pointer; }
   display: flex; flex-direction: column; overflow: hidden; z-index: 3;
   background: var(--fundo); border-radius: var(--raio); box-shadow: var(--sombra);
 }
-#painel > header { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px; }
+#painel > header { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; }
 .logo {
   width: 32px; height: 32px; border-radius: 9px; flex: none;
   background:
@@ -50,9 +50,9 @@ h2:first-child { margin-top: 4px; }
 .link { background: none; border: 0; padding: 0; color: var(--acento); font-weight: 500; font-size: 12.5px; }
 .link:hover { text-decoration: underline; }
 
-#abas { display: flex; background: var(--fundo-2); border-radius: 10px; padding: 3px; }
+#abas { display: flex; background: var(--fundo-2); border-radius: 10px; padding: 3px; margin: 0 14px 10px; }
 #abas button {
-  padding: 5px 12px; border: 0; border-radius: 8px; background: none; color: var(--tinta-2);
+  flex: 1; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: var(--tinta-2);
   font-weight: 600; font-size: 12.5px;
 }
 #abas button.ativa { background: #fff; color: var(--tinta); box-shadow: 0 1px 2px rgba(16, 24, 40, .12); }
@@ -247,4 +247,85 @@ table.lotes .sqlc { color: var(--tinta-3); font-size: 11px; }
   #alternar { display: block; }
   #app.aberto #alternar { left: calc(var(--largura-painel) + 10px); }
   #aviso { left: 12px; }
+}
+
+/* ------------------------------------------------------- formar área */
+#ferramenta {
+  position: absolute; z-index: 3; top: 14px; left: calc(var(--largura-painel) + 24px); right: 64px;
+  display: flex; justify-content: center; pointer-events: none;
+}
+#ferramenta > * { pointer-events: auto; }
+.pilula {
+  display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px 9px 13px; border: 0; border-radius: 999px;
+  background: #fff; color: var(--tinta); font-weight: 600; font-size: 13px; box-shadow: var(--sombra);
+}
+.pilula:hover { background: var(--fundo-2); }
+.pilula[hidden] { display: none; }
+#ferramenta { align-items: flex-start; }
+#card-formar {
+  width: min(420px, 100%); padding: 12px 14px 14px; border-radius: var(--raio); background: #fff; box-shadow: var(--sombra);
+  border: 2px solid #6d28d9;
+}
+#card-formar[hidden] { display: none; }
+.cf-topo { display: flex; justify-content: space-between; align-items: center; }
+.cf-titulo { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12.5px; color: #5b21b6; }
+.pulso { width: 8px; height: 8px; border-radius: 50%; background: #6d28d9; animation: pulso 1.4s ease-in-out infinite; }
+@keyframes pulso { 50% { opacity: .35; transform: scale(.8); } }
+.cf-num { display: flex; gap: 22px; margin: 6px 0 2px; }
+.cf-num b { font-size: 26px; font-weight: 700; letter-spacing: -.03em; margin-right: 4px; }
+.cf-num span { color: var(--tinta-2); font-size: 12.5px; }
+#cf-detalhe { margin: 0; font-size: 12px; color: var(--tinta-2); min-height: 1.2em; }
+#cf-alertas { font-size: 12px; color: #9a5b00; }
+#cf-dica { margin: 6px 0 0; font-size: 12px; color: var(--tinta-3); }
+.cf-acoes { display: flex; gap: 8px; margin-top: 10px; }
+.cf-acoes input {
+  flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--linha); border-radius: 10px; outline: 0; background: var(--fundo-2);
+}
+.cf-acoes input:focus { border-color: #6d28d9; background: #fff; }
+.botao-pri { padding: 8px 14px; border: 0; border-radius: 10px; background: #6d28d9; color: #fff; font-weight: 600; white-space: nowrap; }
+.botao-pri:hover:not(:disabled) { background: #5b21b6; }
+.botao-pri:disabled, .botao-ic:disabled { opacity: .4; cursor: default; }
+.formando .maplibregl-canvas { cursor: crosshair !important; }
+.formando .area-rotulo { pointer-events: none; }
+#toast {
+  position: absolute; z-index: 6; left: calc(var(--largura-painel) + 24px); right: 64px; margin: 0 auto; width: max-content; max-width: 90%;
+  bottom: 70px; padding: 9px 16px; border-radius: 999px; background: rgba(20, 26, 35, .94); color: #fff; font-size: 12.5px;
+  box-shadow: var(--sombra);
+}
+#toast[hidden] { display: none; }
+
+.area-rotulo {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border: 0; border-radius: 999px;
+  background: #fff; color: var(--tinta); font-size: 11.5px; white-space: nowrap; cursor: pointer; box-shadow: 0 1px 6px rgba(16, 24, 40, .3);
+}
+.area-rotulo i { width: 9px; height: 9px; border-radius: 50%; }
+.area-rotulo b { font-weight: 600; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.area-rotulo span { color: var(--tinta-2); }
+.sem-rotulos .area-rotulo { display: none; }
+
+/* aba de áreas salvas */
+#areas-lista { list-style: none; margin: 0; padding: 0; }
+#areas-lista li {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start;
+  padding: 11px 8px; border-radius: 12px; cursor: pointer;
+}
+#areas-lista li:hover { background: var(--fundo-2); }
+#areas-lista .ponto { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; }
+#areas-lista .nome { display: block; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#areas-lista .sub { display: block; font-size: 11.5px; color: var(--tinta-2); }
+#areas-lista .sub.al { color: #9a5b00; }
+#areas-lista .num { text-align: right; white-space: nowrap; }
+#areas-lista .num b { display: block; font-size: 14px; font-weight: 700; }
+#areas-lista .num span { font-size: 11.5px; color: var(--tinta-3); }
+.acoes-i { grid-column: 2 / -1; display: flex; gap: 14px; }
+.acoes-i button { padding: 0; border: 0; background: none; color: var(--acento); font-size: 12px; font-weight: 500; }
+.acoes-i button:hover { text-decoration: underline; }
+.acoes-i button.perigo { color: #c4281c; font-weight: 600; }
+.vazio-areas { text-align: center; color: var(--tinta-2); padding: 34px 10px 10px; }
+.rodape-areas { display: flex; gap: 16px; padding: 12px 8px; border-top: 1px solid var(--linha); margin-top: 6px; }
+.nota-areas { font-size: 11.5px; color: var(--tinta-3); padding: 0 8px; }
+
+@media (max-width: 760px) {
+  #ferramenta { left: 62px; right: 12px; top: 12px; }
+  #toast { left: 12px; right: 12px; bottom: 24px; }
 }

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
-<link rel="stylesheet" href="estilo.css?v=20251125b">
+<link rel="stylesheet" href="estilo.css?v=20251125d">
 </head>
 <body>
 <div id="app">
@@ -21,11 +21,12 @@
         <h1>Radar de Terrenos</h1>
         <p id="subtitulo">carregando…</p>
       </div>
-      <nav id="abas" role="tablist">
-        <button role="tab" data-aba="lista" class="ativa" type="button">Lista</button>
-        <button role="tab" data-aba="filtros" type="button">Filtros</button>
-      </nav>
     </header>
+    <nav id="abas" role="tablist">
+      <button role="tab" data-aba="lista" class="ativa" type="button">Lista</button>
+      <button role="tab" data-aba="filtros" type="button">Filtros</button>
+      <button role="tab" data-aba="areas" id="aba-areas-btn" type="button">Áreas</button>
+    </nav>
 
     <section id="aba-lista" class="aba">
       <div class="topo-lista">
@@ -90,14 +91,52 @@
       <button id="btn-limpar" class="secundario" type="button">Restaurar filtros</button>
     </section>
 
+    <section id="aba-areas" class="aba" hidden>
+      <ol id="areas-lista"></ol>
+      <p id="areas-vazio" class="vazio-areas">Nenhuma área salva ainda.<br>Use <b>Formar área</b> no mapa para somar lotes.</p>
+      <div id="areas-rodape" class="rodape-areas" hidden>
+        <button id="areas-csv" class="link" type="button">Exportar CSV</button>
+        <button id="areas-backup" class="link" type="button">Backup</button>
+        <button id="areas-importar" class="link" type="button">Importar</button>
+      </div>
+      <input type="file" id="areas-arquivo" accept="application/json,.json" hidden>
+      <p class="nota-areas">As áreas ficam salvas só neste navegador. Para levar a outro computador, use Backup e Importar.</p>
+    </section>
+
     <section id="detalhe" hidden></section>
   </aside>
+
+  <div id="ferramenta">
+    <button id="btn-formar" class="pilula" type="button">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5 10 2.5l3.5 5L11 13.5 4 12z"/></svg>
+      Formar área
+    </button>
+    <div id="card-formar" hidden>
+      <div class="cf-topo">
+        <span class="cf-titulo"><i class="pulso"></i><span id="cf-modo">Formando área</span></span>
+        <button id="cf-cancelar" class="link" type="button">Cancelar</button>
+      </div>
+      <div class="cf-num">
+        <div><b id="cf-area">0</b><span>m²</span></div>
+        <div><b id="cf-lotes">0</b><span>lotes</span></div>
+      </div>
+      <p id="cf-detalhe"></p>
+      <div id="cf-alertas"></div>
+      <p id="cf-dica"></p>
+      <div class="cf-acoes">
+        <input id="cf-nome" type="text" placeholder="Nome (opcional)" maxlength="60" autocomplete="off">
+        <button id="cf-limpar" class="botao-ic" type="button">Limpar</button>
+        <button id="cf-salvar" class="botao-pri" type="button">Salvar área</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" hidden></div>
 
   <button id="alternar" type="button" aria-label="Mostrar ou ocultar painel">☰</button>
   <div id="aviso" hidden></div>
 </div>
 
 <script src="vendor/maplibre-gl.js"></script>
-<script src="app.js?v=20251125b"></script>
+<script src="app.js?v=20251125d"></script>
 </body>
 </html>

@@ -31,6 +31,17 @@ hospitais do GeoSampa cobre principalmente a rede pública.
 
 Todos os parâmetros estão no topo de `scripts/processar.py`.
 
+## Formar área
+
+O botão **Formar área** (topo do mapa) liga a seleção de lotes: cada clique soma ou tira um lote
+(Shift+clique pega a mancha inteira). O cartão mostra área, nº de lotes, área do IPTU, construído, CA
+e os alertas dos lotes escolhidos. **Salvar área** deixa a demarcação no mapa, com nome e metragem, e
+dá para formar outras. Na aba **Áreas**: ver, editar, excluir, exportar CSV, fazer backup e importar.
+
+As áreas ficam guardadas **no navegador** (localStorage), sem servidor. Para levar a outro computador
+ou navegador, use Backup e Importar. Só dá para selecionar lotes que aparecem no mapa (os que fazem
+parte de alguma mancha dos zoneamentos marcados).
+
 ## Atualizar os dados
 
 ```bash
