@@ -28,7 +28,7 @@ Regras (premissas de novos negócios):
   8. Metrô e trem (linhas e estações, atuais e projetados): sai o lote que uma
      linha atravessa ou que contém uma estação; fica, com alerta, o lote a até
      METRO_DIST_ALERTA m de uma linha ou estação.
-  6. Alertas (não excluem): melhoramento viário, desapropriação (DUP/DIS),
+  6. Alertas (não excluem): faixa não edificável (área não edificante), melhoramento viário, desapropriação (DUP/DIS),
      unidade geotécnica I, área contaminada ou com potencial de contaminação,
      Passagem - PS (parcelamento aprovado como passagem; cobre vilas inteiras).
 
@@ -121,6 +121,15 @@ METRO_ESTACOES = {"estacao_metro": "mt", "estacao_trem": "mt",
                   "estacao_metro_projetada": "mf", "estacao_trem_projetada": "mf"}
 METRO_ROTULO = {"mt": "metrô/trem atual", "mf": "metrô/trem projetado"}
 
+COR_LINHA = {   # metrô (atuais e projetadas) e trens da CPTM/ViaMobilidade
+    "AZUL": "#0455a1", "VERDE": "#007e5e", "VERMELHA": "#ee3524", "AMARELA": "#e0ae00", "LILAS": "#9b3894",
+    "PRATA": "#8d9aa5", "RUBI": "#a60f43", "DIAMANTE": "#7d8790", "ESMERALDA": "#00927f", "TURQUESA": "#00a5a8",
+    "CORAL": "#f26a5c", "SAFIRA": "#0b3c8c", "JADE": "#5fb45f", "OURO": "#c8a200", "LARANJA": "#f58220",
+    "ROSA": "#ef5fa7", "MARROM": "#8b5a2b", "CELESTE": "#4fb4e0", "VIOLETA": "#7a2fbf", "ONIX": "#2b2b2b",
+}
+NOME_CORREGO = {"CORREGO": "Córrego", "RIBEIRAO": "Ribeirão", "BRACO": "Braço", "RIACHO": "Riacho", "RIO": "Rio",
+                "DRENO": "Dreno", "CAN.": "Can.", "DA": "da", "DE": "de", "DO": "do", "DAS": "das", "DOS": "dos"}
+
 ZONAS_FORA = {"Praça/Canteiro", "VETADO"}       # não são zonas de uso
 ZONAS_PADRAO = ["ZEU", "ZC", "ZEIS-5", "ZEM"]   # marcadas ao abrir o mapa
 
@@ -135,6 +144,7 @@ ALERTAS = {   # camada -> código curto gravado no lote / na mancha
     "melhoramento_viario": "mv", "desapropriacao": "de", "geotecnica_1": "g1",
     "contaminada_svma": "cs", "contaminada_sigac": "cp",
     "passagem": "ps",     # Passagem - PS cobre vilas inteiras: avisa, não exclui
+    "faixa_nao_edificavel": "fn",   # área não edificante (Códigos de Obras 1992/2017): avisa, não exclui
 }
 
 para_wgs = Transformer.from_crs(31983, 4326, always_xy=True)
@@ -293,6 +303,47 @@ def metro_perto(geoms, idx, m, dist):
         li, _ = STRtree(m["pontos"]).query(geoms[idx], predicate="dwithin", distance=dist)
         achados.update(idx[np.unique(li)].tolist())
     return achados
+
+
+def dissolver(geoms, tol=2.5):
+    """Junta polígonos vizinhos e simplifica: bom para desenhar, não para medir."""
+    u = shapely.union_all(shapely.buffer(geoms, 0.3)).buffer(-0.3).simplify(tol)
+    return np.array(list(u.geoms) if hasattr(u, "geoms") else [u], dtype=object)
+
+
+def camadas_de_linhas(gravar, feicoes):
+    """Linhas de metrô/trem, estações projetadas e córregos, para ligar e desligar no mapa."""
+    # ---- metrô e trem (linhas atuais e projetadas)
+    pares = []
+    for nome, tipo, proj in (("linha_metro", "metro", 0), ("linha_trem", "trem", 0),
+                             ("linha_metro_projetada", "metro", 1), ("linha_trem_projetada", "trem", 1)):
+        g, pr = carregar(nome + ".json")
+        for x, p in zip(g, pr):
+            linha = (p.get("nm_linha_metro_trem") or "").strip()
+            rot = (p.get("nr_nome_linha") or "").strip().title() or f"Linha {linha.title()}"
+            if tipo == "trem" and (p.get("nm_empresa_metro_trem") or "").strip():
+                rot += f" ({p['nm_empresa_metro_trem'].strip()})"
+            pares.append((x.simplify(3.0), {"n": rot, "t": tipo, "p": proj,
+                                            "c": COR_LINHA.get(linha.upper(), "#6b7280")}))
+    gravar("metro.geojson.gz", {"type": "FeatureCollection", "features": feicoes(pares)})
+    est = []
+    for nome, tipo in (("estacao_metro_projetada", "Metrô"), ("estacao_trem_projetada", "Trem")):
+        g, pr = carregar(nome + ".json")
+        for x, p in zip(g, pr):
+            est.append((x, {"nome": f"{tipo} {(p.get('nm_estacao_metro_trem') or '').title()} (projetada)"}))
+    gravar("estacoes_proj.geojson", {"type": "FeatureCollection", "features": feicoes(est)})
+
+    # ---- córregos (camada "Drenagem"): natural, canalizado a céu aberto e canalizado subterrâneo
+    tipo_curso = {"Trecho em estado natural": 0, "Trecho canalizado a céu aberto": 1, "Trecho canalizado subterrâneo": 2}
+    g, pr = carregar("drenagem.json")
+    cor = []
+    for x, p in zip(g, pr):
+        t = tipo_curso.get((p.get("nm_tipo_curso_hidrografia") or "").strip())
+        if t is None:                              # lagos e reservatórios não entram
+            continue
+        nome = " ".join(NOME_CORREGO.get(w, w.capitalize()) for w in (p.get("nm_acidente") or "").split())
+        cor.append((x.simplify(2.0), {"n": nome, "t": t}))
+    gravar("corregos.geojson.gz", {"type": "FeatureCollection", "features": feicoes(cor)})
 
 
 def nome_arquivo(zona):
@@ -511,6 +562,8 @@ def main():
                 detalhe_cont[i] = (cp[k].get("dc_tipo_situacao") or "").strip().capitalize()
         log(f"  {camada}: {len(hits)} lotes")
 
+    if "fn" in camadas_alerta:                  # a medição usa os 51 mil polígonos; o desenho, a versão dissolvida
+        camadas_alerta["fn"] = dissolver(camadas_alerta["fn"])
     for cod in ("mt", "mf"):                    # metrô/trem a até METRO_DIST_ALERTA m
         idx = np.flatnonzero(ok)
         hits = metro_perto(geoms, idx, metro[cod], METRO_DIST_ALERTA)
@@ -792,11 +845,12 @@ def main():
         (x.simplify(1.0), {"t": ROTULO_RESTR[camada]})
         for camada, cg in camadas_restr.items() for x in cg)})
     gravar("alertas.geojson.gz", {"type": "FeatureCollection", "features": feicoes(
-        (x.simplify({"g1": 5.0, "mt": 3.0, "mf": 3.0}.get(cod, 1.5)), {"t": cod})
+        (x.simplify({"g1": 5.0, "mt": 3.0, "mf": 3.0, "fn": 0.0}.get(cod, 1.5)), {"t": cod})
         for cod, cg in camadas_alerta.items() for x in cg)})
     gravar("estacoes.geojson", {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": wgs(x), "properties": {"nome": n}}
         for x, n in zip(est_g, est_n)]})
+    camadas_de_linhas(gravar, feicoes)
 
     zonas_meta = []
     for cod in sorted(manchas, key=lambda c: (c not in ZONAS_PADRAO, c)):

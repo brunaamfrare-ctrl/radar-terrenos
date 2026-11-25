@@ -329,3 +329,5 @@ table.lotes .sqlc { color: var(--tinta-3); font-size: 11px; }
   #ferramenta { left: 62px; right: 12px; top: 12px; }
   #toast { left: 12px; right: 12px; bottom: 24px; }
 }
+
+.chave small { color: var(--tinta-3); font-size: 11.5px; margin-left: -2px; }

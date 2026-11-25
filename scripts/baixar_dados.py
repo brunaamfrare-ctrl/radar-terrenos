@@ -150,6 +150,19 @@ def baixar_metro():
         salvar(f"{nome}.json", baixar_camada(camada, ordenar=None))
 
 
+# Córregos (camada "Drenagem") e faixa não edificável (alerta de "área não edificante").
+HIDRO = {
+    "drenagem": ("drenagem", "cd_identificador"),
+    "faixa_nao_edificavel": ("geoconvias_faixa_nao_edificavel", "cd_identificador_nao_edificavel_etl"),
+}
+
+
+def baixar_hidro():
+    print("Córregos e faixa não edificável…")
+    for nome, (camada, ordem) in HIDRO.items():
+        salvar(f"{nome}.json", baixar_camada(camada, ordenar=ordem))
+
+
 def baixar_equipamentos():
     print("Equipamentos e licenciamentos…")
     for nome, camada in {**EQUIPAMENTOS, **LICENCIAMENTOS}.items():
@@ -166,6 +179,8 @@ def main():
     os.makedirs(BRUTOS, exist_ok=True)
     if "--so-apoio" in sys.argv:
         return baixar_apoio()
+    if "--so-hidro" in sys.argv:
+        return baixar_hidro()
     if "--so-metro" in sys.argv:
         return baixar_metro()
     if "--so-equipamentos" in sys.argv:
@@ -184,6 +199,7 @@ def main():
     baixar_restricoes()
     baixar_equipamentos()
     baixar_metro()
+    baixar_hidro()
     baixar_apoio()
 
     if "--sem-lotes" in sys.argv:

@@ -17,6 +17,7 @@ const ALERTAS = {
   ps: 'Passagem – PS (parcelamento de vila)',
   mt: 'Metrô/trem a até 20 m',
   mf: 'Linha projetada a até 20 m',
+  fn: 'Faixa não edificável',
 };
 const COR_ZONA = { ZEU: '#7c4dcc', ZC: '#1d84c9', 'ZEIS-5': '#0f9b8e', ZEM: '#d6409f' };
 const PALETA = ['#b45309', '#4d7c0f', '#be123c', '#0369a1', '#7e22ce', '#a16207', '#15803d', '#9f1239', '#475569', '#c2410c'];
@@ -162,7 +163,8 @@ map.on('load', async () => {
     zonaInfo.set(z.cod, { ...z, celulas: new Set(z.celulas), cor: COR_ZONA[z.cod] || PALETA[n++ % PALETA.length] });
   }
 
-  for (const s of ['zonas', 'tombados', 'restricoes', 'alertas', 'estacoes', 'pontos', 'lotes', 'selecao', 'lote-sel', 'areas', 'formando']) {
+  for (const s of ['zonas', 'tombados', 'restricoes', 'alertas', 'estacoes', 'estacoes-proj', 'pontos', 'lotes', 'selecao', 'lote-sel',
+    'areas', 'formando', 'metro', 'corregos']) {
     map.addSource(s, { type: 'geojson', data: fc() });
   }
   map.addSource('manchas', { type: 'geojson', data: fc(), promoteId: 'id' });
@@ -206,6 +208,27 @@ map.on('load', async () => {
   map.addLayer({ id: 'formando-fill', type: 'fill', source: 'formando', paint: { 'fill-color': '#6d28d9', 'fill-opacity': 0.62 } });
   map.addLayer({ id: 'formando-line', type: 'line', source: 'formando',
     paint: { 'line-color': '#2e1065', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 1.5, 18, 3.2] } });
+  // córregos: linha azul por cima dos lotes (tracejada quando o trecho é subterrâneo)
+  const larg = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 12, a, 15, b, 18, c];
+  map.addLayer({ id: 'corregos-line', type: 'line', source: 'corregos', minzoom: 12, filter: ['!=', ['get', 't'], 2],
+    layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#1565e0', 'line-width': larg(0.9, 1.8, 3.4) } });
+  map.addLayer({ id: 'corregos-sub', type: 'line', source: 'corregos', minzoom: 12, filter: ['==', ['get', 't'], 2],
+    paint: { 'line-color': '#3b82f6', 'line-width': larg(0.8, 1.5, 2.8), 'line-dasharray': [2, 2], 'line-opacity': 0.85 } });
+  map.addLayer({ id: 'corregos-hit', type: 'line', source: 'corregos', minzoom: 12,
+    paint: { 'line-color': '#000', 'line-width': 12, 'line-opacity': 0 } });
+  // linhas de metrô e trem (atuais contínuas, projetadas tracejadas) e estações projetadas
+  const oculta = { visibility: 'none' };
+  map.addLayer({ id: 'metro-halo', type: 'line', source: 'metro', layout: { ...oculta, 'line-cap': 'round' },
+    paint: { 'line-color': '#fff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 9], 'line-opacity': 0.85 } });
+  map.addLayer({ id: 'metro-line', type: 'line', source: 'metro', filter: ['==', ['get', 'p'], 0], layout: { ...oculta, 'line-cap': 'round' },
+    paint: { 'line-color': ['get', 'c'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 5.5] } });
+  map.addLayer({ id: 'metro-proj', type: 'line', source: 'metro', filter: ['==', ['get', 'p'], 1], layout: oculta,
+    paint: { 'line-color': ['get', 'c'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 5], 'line-dasharray': [1.6, 1.4] } });
+  map.addLayer({ id: 'metro-hit', type: 'line', source: 'metro', layout: oculta,
+    paint: { 'line-color': '#000', 'line-width': 14, 'line-opacity': 0 } });
+  map.addLayer({ id: 'estacoes-proj', type: 'circle', source: 'estacoes-proj', minzoom: 11.5, layout: oculta,
+    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 11.5, 2.5, 16, 6], 'circle-color': '#fff',
+      'circle-stroke-color': '#6b7280', 'circle-stroke-width': 1.6 } });
   map.addLayer({ id: 'pontos', type: 'circle', source: 'pontos', maxzoom: 12.5,
     layout: { 'circle-sort-key': ['get', 'area_eq'] },
     paint: { 'circle-color': exprCor(), 'circle-stroke-color': '#fff', 'circle-stroke-width': 0.6,
@@ -234,6 +257,7 @@ map.on('load', async () => {
   ligarInterface();
   interacoes();
   ligarAreas();
+  carregarCamada('corregos');
   await trocarZonas();
   map.on('moveend', () => { atualizarLista(); carregarLotes(); gravarHash(); });
   if (idLink && porId.has(idLink)) selecionar(idLink, true);
@@ -433,40 +457,56 @@ function interacoes() {
   const dica = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dica', offset: 12, maxWidth: '300px' });
   dicaGlobal = dica;
   let hoverId = null;
+  let donoDica = null;                      // quem escreveu o texto da dica (evita mostrar texto velho)
   const soltar = () => {
     if (hoverId !== null) map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: false });
     hoverId = null;
   };
   map.on('mousemove', 'manchas-fill', e => {
     if (formar.ativo) return;
-    if (map.queryRenderedFeatures(e.point, { layers: ['areas-fill'] }).length) return;
+    if (map.queryRenderedFeatures(e.point, { layers: ['areas-fill', 'corregos-hit', 'metro-hit'] }).length) return;
     const p = e.features[0].properties;
     if (hoverId !== p.id) {
       soltar(); hoverId = p.id;
       map.setFeatureState({ source: 'manchas', id: hoverId }, { hover: true });
-      dica.setHTML(dicaMancha(p));
     }
+    if (donoDica !== 'm' + p.id) { dica.setHTML(dicaMancha(p)); donoDica = 'm' + p.id; }
     map.getCanvas().style.cursor = 'pointer';
     dica.setLngLat(e.lngLat).addTo(map);
   });
-  map.on('mouseleave', 'manchas-fill', () => { soltar(); dica.remove(); map.getCanvas().style.cursor = ''; });
+  map.on('mouseleave', 'manchas-fill', () => { soltar(); dica.remove(); donoDica = null; map.getCanvas().style.cursor = ''; });
   const rotRestr = p => `<b>Restrição</b><br>${esc(p.t)}`;
-  for (const [camada, rot] of [['pontos', dicaMancha], ['estacoes', p => `<b>${esc(p.nome)}</b>`],
+  for (const [camada, rot] of [['pontos', dicaMancha], ['estacoes', p => `<b>${esc(p.nome)}</b>`], ['estacoes-proj', p => `<b>${esc(p.nome)}</b>`],
     ['tombados-fill', p => `<b>Bem tombado</b><br>${esc(p.nome)}${p.sit && p.sit !== 'TOMBADO' ? ' (' + esc(p.sit) + ')' : ''}`],
     ['restricoes-fill', rotRestr], ['alertas-fill', p => `<b>Alerta</b><br>${esc(ALERTAS[p.t] || p.t)}`]]) {
     map.on('mousemove', camada, e => {
       if (formar.ativo) return;
       if (camada !== 'pontos' && map.queryRenderedFeatures(e.point, { layers: ['manchas-fill'] }).length) return;
       map.getCanvas().style.cursor = camada === 'pontos' ? 'pointer' : '';
+      donoDica = 'x';
       dica.setLngLat(e.lngLat).setHTML(rot(e.features[0].properties)).addTo(map);
     });
     map.on('mouseleave', camada, () => { dica.remove(); map.getCanvas().style.cursor = ''; });
   }
   map.on('mousemove', 'areas-fill', e => {
     if (formar.ativo) return;
+    if (map.queryRenderedFeatures(e.point, { layers: ['corregos-hit', 'metro-hit'] }).length) return;
     const a = areas.find(x => x.id === e.features[0].properties.aid);
-    if (a) dica.setLngLat(e.lngLat).setHTML(dicaArea(a)).addTo(map);
+    if (a) { donoDica = 'x'; dica.setLngLat(e.lngLat).setHTML(dicaArea(a)).addTo(map); }
   });
+  const TIPO_CORREGO = ['Trecho a céu aberto', 'Canalizado, a céu aberto', 'Canalizado e tampado (subterrâneo)'];
+  const linhas = {
+    'corregos-hit': p => `<b>${esc(p.n || 'Córrego sem nome')}</b><br><span class="sec">${TIPO_CORREGO[p.t] || ''}</span>`,
+    'metro-hit': p => `<b>${esc(p.n)}</b><br><span class="sec">${p.p ? 'Linha projetada' : 'Em operação'} · ${p.t === 'metro' ? 'metrô' : 'trem'}</span>`,
+  };
+  for (const [camada, rot] of Object.entries(linhas)) {
+    map.on('mousemove', camada, e => {
+      if (formar.ativo) return;
+      donoDica = 'x';
+      dica.setLngLat(e.lngLat).setHTML(rot(e.features[0].properties)).addTo(map);
+    });
+    map.on('mouseleave', camada, () => { dica.remove(); donoDica = null; });
+  }
   map.on('mouseleave', 'areas-fill', () => { if (!formar.ativo) dica.remove(); });
   const dicaLote = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dica', offset: 10, maxWidth: '280px' });
   map.on('mousemove', 'lotes-fill', e => {
@@ -619,6 +659,15 @@ function sincronizarControles() {
 }
 
 const camadaTardia = {};   // camadas pesadas só são baixadas quando ligadas
+const CARGA = { restricoes: 'restricoes.geojson.gz', alertas: 'alertas.geojson.gz', metro: 'metro.geojson.gz', corregos: 'corregos.geojson.gz' };
+function carregarCamada(nome) {
+  if (!camadaTardia[nome]) {
+    const tarefas = [dados(CARGA[nome]).then(d => map.getSource(nome).setData(d))];
+    if (nome === 'metro') tarefas.push(dados('estacoes_proj.geojson').then(d => map.getSource('estacoes-proj').setData(d)));
+    camadaTardia[nome] = Promise.all(tarefas).catch(e => { console.error(e); camadaTardia[nome] = null; });
+  }
+  return camadaTardia[nome];
+}
 function ligarInterface() {
   sincronizarControles();
   const liga = (sel, chave, conv = Number) => $(sel).addEventListener('input', e => {
@@ -660,13 +709,12 @@ function ligarInterface() {
   });
   $$('[data-camada]').forEach(c => c.addEventListener('change', async () => {
     const nome = c.dataset.camada;
-    if (c.checked && (nome === 'restricoes' || nome === 'alertas') && !camadaTardia[nome]) {
-      camadaTardia[nome] = dados(`${nome}.geojson.gz`).then(d => map.getSource(nome).setData(d)).catch(console.error);
-      await camadaTardia[nome];
-    }
+    if (c.checked && CARGA[nome]) await carregarCamada(nome);
     const v = c.checked ? 'visible' : 'none';
     const ids = { zonas: ['zonas-fill', 'zonas-line'], tombados: ['tombados-fill', 'tombados-line'],
-      restricoes: ['restricoes-fill', 'restricoes-line'], alertas: ['alertas-fill', 'alertas-line'], estacoes: ['estacoes'] }[nome];
+      restricoes: ['restricoes-fill', 'restricoes-line'], alertas: ['alertas-fill', 'alertas-line'], estacoes: ['estacoes'],
+      corregos: ['corregos-line', 'corregos-sub', 'corregos-hit'],
+      metro: ['metro-halo', 'metro-line', 'metro-proj', 'metro-hit', 'estacoes-proj'] }[nome];
     ids.forEach(id => map.setLayoutProperty(id, 'visibility', v));
   }));
   $('#btn-limpar').onclick = () => { est = structuredClone(PADRAO); $('#busca').value = ''; sincronizarControles(); aplicar(); };

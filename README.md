@@ -18,7 +18,7 @@ O site é estático e fica na pasta `docs/` (publicado pelo GitHub Pages).
 | Mancha | Lotes elegíveis do mesmo zoneamento (Lei 18.177/24) com divisa comum ≥ 3 m, somando ≥ 2.500 m² |
 | Prédios | Lote em condomínio ("CD") entra na mancha quando a área construída estimada ÷ terreno é ≤ a régua "CA máximo dos prédios" do mapa (0 a 4, de 0,5 em 0,5; padrão 4). A área é estimada pela volumetria da camada "Edificações": projeção de cada volume × pavimentos (altura ÷ 2,9 m). Não conta subsolos e o levantamento é de 2014 |
 | Vilas | A passagem de vila (lote "V" — via de acesso) entra como elo: une as casas dos dois lados e soma área, sem contar como lote a negociar. A vila é "completa" quando toda casa que encosta na passagem está na mancha |
-| Alertas (não excluem) | Metrô/trem a até 20 m · lote atingido por melhoramento viário, desapropriação (DUP/DIS), unidade geotécnica I da carta de 2024, área contaminada ou com potencial de contaminação, ou parcelamento aprovado como Passagem – PS |
+| Alertas (não excluem) | Faixa não edificável (área não edificante, Códigos de Obras de 1992 e 2017) · Metrô/trem a até 20 m · lote atingido por melhoramento viário, desapropriação (DUP/DIS), unidade geotécnica I da carta de 2024, área contaminada ou com potencial de contaminação, ou parcelamento aprovado como Passagem – PS |
 | Nota de forma (0–100) | 30% retangularidade · 30% miolo aproveitável (largura ≥ 20 m) · 20% perímetro × área · 20% nº de vértices (ideal ≤ 7) |
 | Área equivalente | área × min(1, nota ÷ 80) |
 | Cor | vermelho ≥ 2.500 m² · amarelo ≥ 4.000 m² · verde ≥ 6.000 m² (de área equivalente); cinza quando a forma derruba a área equivalente abaixo de 2.500 m² |
@@ -30,6 +30,12 @@ do lote, o que for menor) e mais de 1,5 m de largura — filetes de desenho na d
 hospitais do GeoSampa cobre principalmente a rede pública.
 
 Todos os parâmetros estão no topo de `scripts/processar.py`.
+
+## Camadas do mapa
+
+Em **Filtros → Mapa**: córregos (linha azul por cima dos lotes; tracejada quando o trecho é canalizado e
+subterrâneo), estações de metrô e trem, linhas de metrô e trem (contínuas as atuais, tracejadas as
+projetadas, com a cor de cada linha), restrições, alertas, bens tombados e zoneamento.
 
 ## Formar área
 
@@ -57,7 +63,7 @@ Depois é só fazer commit da pasta `docs/dados/`.
 
 GeoSampa / Prefeitura de São Paulo (WFS): `lote_cidadao`, `perimetro_zona_lei_18177_24`,
 bens tombados e áreas envoltórias, área cedida, CAP, passagem, diretriz, desmembramento de gleba,
-conjunto, operações urbanas, outorga onerosa, alvarás de HIS/HMP, cota de solidariedade, fruição pública,
+conjunto, operações urbanas, drenagem (córregos), faixa não edificável, linhas de metrô e trem, outorga onerosa, alvarás de HIS/HMP, cota de solidariedade, fruição pública,
 EIV, empreendimentos habitacionais, lei de melhoramento viário vigente, plantas DUP/DIS, carta geotécnica 2024, áreas
 contaminadas (SVMA e SIGAC), equipamentos de saúde, educação e segurança, distritos e estações
 de metrô/trem.
