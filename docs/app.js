@@ -231,7 +231,7 @@ function buscarManchas(z) {
         const p = m.properties;
         m._alerta = alertasDe(p).length > 0;
         p._al = m._alerta;
-        m._texto = semAcento(`${p.ruas} ${p.distrito} ${p.id} ${p.zona}`);
+        m._texto = semAcento(`${p.ruas} ${p.distrito} ${p.id} ${quadrasDe(p)} ${quadrasDe(p).replace(/\./g, '')} ${p.zona}`);
       }
       return d.features;
     }).catch(e => { cacheManchas.delete(z); console.error(e); return []; }));
@@ -317,8 +317,10 @@ function visiveis() {
   return lista.filter(m => b.contains([m.properties.lon, m.properties.lat]));
 }
 
+// setor.quadra no formato do GeoSampa (SSS.QQQ); manchas que cruzam quadras listam todas
+const quadrasDe = p => p.sq || `${p.id.slice(0, 3)}.${p.id.slice(4, 7)}`;
 const ruasDe = p => (p.ruas ? p.ruas.split(' · ') : []).map(nomeProprio);
-const titulo = p => { const r = ruasDe(p); return r.length ? r.slice(0, 2).join(' × ') : `Quadra ${p.id.slice(0, 7)}`; };
+const titulo = p => { const r = ruasDe(p); return r.length ? r.slice(0, 2).join(' × ') : `Quadra ${quadrasDe(p)}`; };
 
 function atualizarLista() {
   const campo = est.modo === 'faixa' ? 'area_eq' : 'area';
@@ -402,6 +404,7 @@ async function desenharLotes() {
 function dicaMancha(p) {
   const al = alertasDe(p).map(k => `<div class="al">⚠ ${ALERTAS[k]} — ${plural(p['a_' + k], 'lote', 'lotes')}</div>`).join('');
   return `<table class="dica-t">
+    <tr><td>Setor · quadra</td><td><b>${esc(quadrasDe(p))}</b></td></tr>
     <tr><td>Área total</td><td><b>${fmt(p.area)} m²</b></td></tr>
     <tr><td>Área construída</td><td>${p.np ? '~' : ''}${fmt(p.ac)} m²</td></tr>
     <tr><td>Lotes</td><td>${p.n}${p.np ? ` <span class="sec">(${plural(p.np, 'prédio', 'prédios')})</span>` : ''}</td></tr>
@@ -490,8 +493,8 @@ function desenharDetalhe(m, lotes) {
   el.innerHTML = `
     <div class="topo"><button class="botao-ic" id="voltar" type="button">← Lista</button>
       <button class="botao-ic" id="copiar" type="button">Copiar link</button></div>
-    <h3>${esc(titulo(p))}</h3>
-    <p class="onde">${esc(nomeProprio(p.distrito))} · quadra ${esc(p.id.slice(0, 7))}${ruas.length > 2 ? ' · ' + esc(ruas.slice(2).join(', ')) : ''}</p>
+    <h3>${esc(titulo(p))}<span class="sq" title="Setor · quadra">${esc(quadrasDe(p))}</span></h3>
+    <p class="onde">${esc(nomeProprio(p.distrito))}${ruas.length > 2 ? ' · ' + esc(ruas.slice(2).join(', ')) : ''}</p>
     <div class="tags"><span class="tag t${fx}">${rotFaixa}</span><span class="tag" title="${esc(zonaInfo.get(p.zona)?.nome || '')}">${esc(p.zona)}</span>${
       p.np ? `<span class="tag">${plural(p.np, 'prédio', 'prédios')}</span>` : ''}${p.vila ? `<span class="tag">Vila ${p.vila}</span>` : ''}</div>
     <div class="cartoes">
@@ -640,10 +643,10 @@ function ligarInterface() {
   $('#btn-csv').onclick = () => {
     const l = manchas.filter(passa);
     baixarCSV('manchas.csv',
-      ['ID (setor-quadra-lote)', 'Zoneamento', 'Distrito', 'Ruas', 'Área somada (m²)', 'Área IPTU (m²)', 'Área equivalente (m²)',
+      ['ID (setor-quadra-lote)', 'Setor.quadra', 'Zoneamento', 'Distrito', 'Ruas', 'Área somada (m²)', 'Área IPTU (m²)', 'Área equivalente (m²)',
         'Faixa', 'Lotes', 'Prédios', 'Nota de forma', 'Retangularidade', 'Miolo aproveitável', 'Perímetro×área', 'Vértices',
         'Área construída (m²)', 'CA médio', 'Usos', 'Vila', 'Alertas', 'Estação mais próxima', 'Distância (m)', 'Latitude', 'Longitude', 'Link'],
-      l.map(m => { const p = m.properties; return [p.id, p.zona, p.distrito, p.ruas, p.area, p.area_iptu, p.area_eq,
+      l.map(m => { const p = m.properties; return [p.id, quadrasDe(p), p.zona, p.distrito, p.ruas, p.area, p.area_iptu, p.area_eq,
         ['forma compromete', 'vermelho', 'amarelo', 'verde'][p.faixa], p.n, p.np, p.forma, p.ret, p.miolo, p.comp, p.nv, p.ac,
         String(p.ca).replace('.', ','), p.usos, p.vila,
         alertasDe(p).map(k => `${ALERTAS[k]} (${p['a_' + k]})`).join(' | '),

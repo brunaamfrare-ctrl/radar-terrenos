@@ -693,6 +693,10 @@ def main():
             "usos": " · ".join(f"{v} {k.lower()}" for k, v in usos.most_common()),
             "est": est_n[ne], "est_m": round(float(est_g[ne].distance(rp))),
             "lon": round(lon, 6), "lat": round(lat, 6), "cel": cel}
+        quadras = sorted({f"{props[idx[k]]['cd_setor_fiscal']}.{props[idx[k]]['cd_quadra_fiscal']}" for k in ms})
+        if len(quadras) > 1:                     # mancha que cruza quadras (1,7%): lista todas
+            q0 = f"{p0['cd_setor_fiscal']}.{p0['cd_quadra_fiscal']}"
+            pr["sq"] = " · ".join([q0] + [q for q in quadras if q != q0])
         for cod, v in avisos.items():
             pr["a_" + cod] = v                   # nº de lotes com cada alerta
         manchas[z].append({"type": "Feature", "geometry": wgs(u.simplify(0.4)), "properties": pr})
